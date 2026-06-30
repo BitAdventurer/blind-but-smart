@@ -1,0 +1,84 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyTorch
+*.pt
+*.pth
+*.ckpt
+checkpoints/*
+!checkpoints/.gitkeep
+
+# Jupyter
+.ipynb_checkpoints
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs and outputs
+logs/*
+!logs/.gitkeep
+logs/*.log
+logs/**/*.log
+results/*
+!results/.gitkeep
+results/**/*.json
+results/**/*.png
+results/**/*.pdf
+
+# Data (large files)
+gui360_full/*
+gui360_bench/*
+!gui360_full/.gitkeep
+!gui360_bench/.gitkeep
+gui360_full/raw/
+gui360_full/processed_data/**/*.json
+gui360_full/processed_data/**/*.jpg
+gui360_full/processed_data/**/*.png
+gui360_full/.cache/
+
+# Local papers / manuscripts
+docs/*.pdf
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backup directories
+_backup_*/
+*.bak
+*.backup
+
+# Environment
+.env
+.venv
+env/
+venv/
+ENV/
+
+# Temp files
+tmp/
+temp/
+*.tmp
