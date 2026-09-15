@@ -1,5 +1,7 @@
 # Blind but Smart
 
+[![Runtime tests](https://github.com/BitAdventurer/blind-but-smart/actions/workflows/runtime-tests.yml/badge.svg?branch=main)](https://github.com/BitAdventurer/blind-but-smart/actions/workflows/runtime-tests.yml)
+
 Reference implementation of joint regional disclosure-budget and candidate-count
 control for recorded GUI grounding. The maintained runtime is
 [`src/gui_joint_control`](src/gui_joint_control), exposed through the `bbs` command.
@@ -58,9 +60,21 @@ H** and **258,382 for Independent**, including target critics. These are not the
 historical manuscript parameter counts; this implementation does not claim an
 equal-capacity comparison.
 
-## Earlier implementation
+## Repository layout
 
-The earlier scripts and packages remain available for inspection. Their original
-instructions are preserved in [Legacy usage](docs/LEGACY_USAGE.md). They are not
-the entry point for the new `bbs` workflow, and their artifacts should not be
-mixed with new runs.
+```text
+configs/                   Reference experiment configuration
+docs/NAACL_RUNTIME.md       Commands, input schemas, and execution contract
+src/gui_joint_control/     Maintained implementation and bbs entry point
+tests/                     CPU tests, including tiny real Qwen models
+.github/workflows/         Automated checks
+pyproject.toml             Dependencies and package configuration
+```
+
+Store datasets under `data/`, model snapshots under `models/`, and generated
+outputs under `runs/`. These local artifacts are excluded from version control;
+commands create their output directories as needed. Install dependencies through
+`pyproject.toml` using the command above.
+
+Earlier experimental packages, simulation utilities, and ESWA report generators
+are available in [Git history](https://github.com/BitAdventurer/blind-but-smart/tree/c13776d184250d55f008afb76658f5a02cbcf120).
