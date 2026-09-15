@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=78"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blind-but-smart"
+version = "0.2.0"
+description = "Explicit reference runtime for joint GUI disclosure and candidate-count control"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = ["numpy>=2,<3", "scipy>=1.14,<2", "torch>=2.6", "Pillow>=11"]
+
+[project.optional-dependencies]
+vlm = ["transformers==4.57.6", "safetensors>=0.4", "accelerate>=1", "peft==0.18.1"]
+test = ["pytest>=8"]
+
+[project.scripts]
+bbs = "gui_joint_control.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
