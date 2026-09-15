@@ -1,91 +1,57 @@
-# Python
+# Python environments, build products, and caches
 __pycache__/
 *.py[cod]
-*$py.class
 *.so
-.Python
+.venv/
+venv/
+env/
+ENV/
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
+.eggs/
 *.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.coverage
+htmlcov/
 
-# PyTorch
+# Local data, model snapshots, and generated run artifacts
+/data/
+/local_data/
+/models/
+/runs/
+/results/
+/logs/
+/checkpoints/
+/gui360_full/
+/gui360_bench/
 *.pt
 *.pth
 *.ckpt
-checkpoints/*
-!checkpoints/.gitkeep
+*.safetensors
+*.npz
+*.npy
+*.log
+/docs/*.pdf
 
-# Jupyter
-.ipynb_checkpoints
-
-# IDE
+# Credentials and local editor settings
+.env
+.env.*
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
 
-# Logs and outputs
-logs/*
-!logs/.gitkeep
-logs/*.log
-logs/**/*.log
-results/*
-!results/.gitkeep
-results/**/*.json
-results/**/*.png
-results/**/*.pdf
-
-# Data (large files)
-gui360_full/*
-gui360_bench/*
-!gui360_full/.gitkeep
-!gui360_bench/.gitkeep
-gui360_full/raw/
-gui360_full/processed_data/**/*.json
-gui360_full/processed_data/**/*.jpg
-gui360_full/processed_data/**/*.png
-gui360_full/.cache/
-
-# Local papers / manuscripts
-docs/*.pdf
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Backup directories
-_backup_*/
-*.bak
-*.backup
-
-# Environment
-.env
-.venv
-env/
-venv/
-ENV/
-
-# Temp files
+# Temporary files and backups
 tmp/
 temp/
 *.tmp
-
-# Current runtime local artifacts
-runs/
-.pytest_cache/
-*.safetensors
-*.npz
-*.npy
+_backup_*/
+*.bak
+*.backup
+.DS_Store
+Thumbs.db

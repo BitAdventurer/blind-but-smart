@@ -1,8 +1,7 @@
 """Release-only relevance and deterministic sampled-output aggregation.
 
-These routines implement the current manuscript contract, not the legacy
-``hmdp.got`` weighted-average-coordinate rule. They never receive clean image
-features, a probe, or a reference target. Arithmetic for scoring is float64.
+These routines select a weighted medoid from sampled outputs. They never receive
+clean image features, a probe, or a reference target. Scoring uses float64.
 """
 from __future__ import annotations
 
