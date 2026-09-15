@@ -1,0 +1,157 @@
+{
+  "schema_version": 1,
+  "profile": "new_reference_2026_09_16",
+  "purpose": "New reimplementation specification, not a reconstruction of the reported runs",
+  "reproduces_reported_results": false,
+  "source_policy": {
+    "retained_contract": "docs/NAACL_RUNTIME.md: representation, budget/filter interface, dimensions, reward, declared learning rates, discounts, replay mixture and decoding",
+    "new_design_choices": [
+      "controller architecture and initialization",
+      "controller optimizer details",
+      "per-optimizer update frequency",
+      "Gumbel temperature schedule",
+      "prompt cap scope and overflow",
+      "history provenance",
+      "public initialization seed",
+      "independent fixed complementary action 3.0 budget and 5 candidates"
+    ],
+    "result_policy": "All results from this profile require a new run ID and fresh evaluation; do not attach old accuracy, parameter counts or GPU hours."
+  },
+  "reference_controller": {
+    "observation_dim": 28,
+    "regions": 25,
+    "count_classes": 20,
+    "critic_input_dim": 73,
+    "hidden_sizes": [
+      128,
+      128
+    ],
+    "activation": "relu",
+    "encoder": "identity",
+    "initialization": "PyTorch Linear default; record PyTorch version and initialization seed",
+    "log_std_bounds": [
+      -5.0,
+      2.0
+    ],
+    "dtype": "float32",
+    "optimizer": {
+      "name": "Adam",
+      "lr": 0.0003,
+      "betas": [
+        0.9,
+        0.999
+      ],
+      "eps": 1e-08,
+      "weight_decay": 0.0
+    },
+    "gamma_H": 0.99,
+    "gamma_CB": 0.0,
+    "polyak_tau": 0.005,
+    "gradient_clip_l2": 1.0,
+    "entropy_coefficients": [
+      0.2,
+      0.2
+    ],
+    "gumbel": {
+      "schedule": "linear_then_constant",
+      "start": 1.0,
+      "end": 0.1,
+      "first_update": 1,
+      "last_anneal_update": 500000
+    },
+    "update_order": [
+      "one joint twin-critic optimizer step",
+      "one actor optimizer step with critics frozen",
+      "one Polyak update of both targets"
+    ],
+    "target_initialization": "exact frozen copy of online critics",
+    "target_update_formula": "target = (1-tau)*target + tau*online",
+    "actor_gradients": "continuous score-function critic gradient and reparameterized entropy; categorical straight-through Gumbel; see trainer.py and docs/NAACL_RUNTIME.md",
+    "budget_range": [
+      1.5,
+      5.0
+    ],
+    "evaluation": "tanh(mean) affine mapped to budget range; smallest categorical argmax + 1"
+  },
+  "training": {
+    "public_initialization_seed": 20260916,
+    "families": 10,
+    "evaluation_replicates": 3,
+    "replay_batch_size": 256,
+    "replay_capacity": 1000000,
+    "sampling": {
+      "success_probability": 0.7,
+      "failure_probability": 0.3,
+      "within_stratum": "uniform with replacement",
+      "empty_stratum": "abort run",
+      "capacity_overflow": "abort run"
+    },
+    "buffer": "one immutable task/family behavior buffer shared across methods; no on-policy additions",
+    "iterations": {
+      "H": [
+        1000000
+      ],
+      "CB": [
+        1000000
+      ],
+      "Independent": [
+        500000,
+        500000
+      ],
+      "Independent-1M": [
+        1000000,
+        1000000
+      ]
+    },
+    "independent": "Separate disclosure and count networks; no sharing or joint fine-tuning. Same reference width per component; record actual parameter totals, do not assume capacity matching.",
+    "development_interval": 10000,
+    "checkpoint_selection": "maximum eligible discounted return, then lower eligible budget, lower eligible candidate count, earlier update",
+    "resume": "weights, targets, optimizer states, sampler state, RNG states and iteration counter required; otherwise start a new run",
+    "fixed_complement": {
+      "regional_budget": 3.0,
+      "candidate_count": 5
+    }
+  },
+  "prompt": {
+    "input_token_limit": 4096,
+    "cap_scope": "all final model-input token IDs including wrapper, visual placeholders, retrieval, history, current instruction and generation prefix",
+    "action_history_source": "preceding reference-record thoughts only; no current/future target action or generated thought",
+    "max_previous_steps": 10,
+    "history_order": "chronological, latest last",
+    "scoring_text": "G: current thought; A: request followed by retained thoughts, joined by newline, without whitespace normalization",
+    "overflow_order": [
+      "remove oldest history entry",
+      "remove lowest-scored retrieval entry, last entry on a tie",
+      "abort run"
+    ],
+    "current_instruction_policy": "never truncate",
+    "empty_scoring_span": "abort run",
+    "render_contract": "Tokenize the complete final model prompt after each removal; store exact token IDs, UTF-8 scoring span and its embedding-token IDs."
+  },
+  "decoding": {
+    "temperature": 0.7,
+    "top_p": 0.9,
+    "top_k": 0,
+    "num_beams": 1,
+    "max_new_tokens": {
+      "G": 32,
+      "A": 128
+    }
+  },
+  "relevance": {
+    "dtype": "float64",
+    "norm_floor": 1e-12,
+    "formula": "1-sum((unit(v)-unit(e))**2)/2",
+    "grounding_weights": "exp(mean_logp)*r**2",
+    "clip_score": false
+  },
+  "required_run_bindings": {
+    "run_id": null,
+    "model_and_tokenizer_immutable_revisions": null,
+    "fitted_executor_and_projection_checkpoint_hashes": null,
+    "prompt_renderer_and_action_parser_code_hashes": null,
+    "dataset_split_eligible_manifest_and_replay_hashes": null,
+    "runtime_versions_gpu_and_precision": null,
+    "family_task_seed_and_component_checkpoint_registry": null
+  }
+}

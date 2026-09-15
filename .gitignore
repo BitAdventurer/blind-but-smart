@@ -82,3 +82,10 @@ ENV/
 tmp/
 temp/
 *.tmp
+
+# Current runtime local artifacts
+runs/
+.pytest_cache/
+*.safetensors
+*.npz
+*.npy
