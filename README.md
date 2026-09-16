@@ -9,7 +9,7 @@
 
 A reference implementation for studying how a GUI agent can allocate limited visual disclosure and decoding effort together. A controller chooses regional disclosure budgets and the number of instruction-conditioned candidates; a frozen vision–language executor operates on one shared, noise-refined visual release.
 
-[Overview](#-overview) · [Quick Start](#-quick-start) · [Usage](#-usage) · [Runtime Guide](docs/NAACL_RUNTIME.md) · [Scope](#-scope-and-reproducibility)
+[Overview](#-overview) · [Quick Start](#-quick-start) · [Usage](#%EF%B8%8F-usage) · [Runtime Guide](docs/NAACL_RUNTIME.md) · [Scope](#-scope-and-reproducibility)
 
 ## 📌 Overview
 
