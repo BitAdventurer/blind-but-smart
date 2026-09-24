@@ -1,7 +1,7 @@
-"""New reference controller components; not the historical training implementation.
+"""Current-manuscript controller components, not recovered historical weights.
 
 The reference makes architecture and sampling choices explicit.  It does not
-load the original checkpoints, reproduce the paper's parameter totals, collect
+load the original checkpoints, recover reported empirical results, collect
 replay, construct Bellman targets, or run experiments.  The statistical-result
 files are intentionally never read or modified here.  PyTorch is imported only
 when ``build_controllers`` is called; the specification and count helpers use
@@ -15,8 +15,8 @@ from typing import Any
 
 
 REFERENCE_GAPS = (
-    "This architecture is a new reference choice, not recovered original code.",
-    "Reference parameter counts must not replace reported experimental counts.",
+    "Architecture and counts follow the current author-specified manuscript, not recovered historical checkpoints.",
+    "Matching parameter counts does not verify reported empirical results.",
     "Frozen vision/language models and projection are external to the controller.",
     "No replay collector, privacy filter, executor, or full SAC trainer is supplied by this module.",
     "Evaluation of this implementation requires new runs and new result identifiers.",
@@ -27,11 +27,12 @@ DEFAULTS = {
     "regions": 25,
     "count_classes": 20,
     "critic_input_dim": 73,
-    "hidden_sizes": [128, 128],
+    "hidden_sizes": [256, 256],
+    "independent_hidden_sizes": [170, 170],
     "activation": "relu",
     "log_std_bounds": [-5.0, 2.0],
     "optimizer": {
-        "name": "Adam", "lr": 3e-4, "betas": [0.9, 0.999],
+        "name": "AdamW", "lr": 3e-4, "betas": [0.9, 0.999],
         "eps": 1e-8, "weight_decay": 0.0,
     },
 }
@@ -41,15 +42,16 @@ DEFAULTS = {
 # configuration that the component implementation would silently ignore.
 FIXED_SEMANTICS = {
     "encoder": "identity",
-    "initialization": "PyTorch Linear default; record PyTorch version and initialization seed",
+    "initialization": "hidden Kaiming-uniform ReLU; output Xavier-uniform; zero biases",
     "dtype": "float32",
+    "log_density_dtype": "float64",
     "gamma_H": 0.99,
     "gamma_CB": 0.0,
     "polyak_tau": 0.005,
     "gradient_clip_l2": 1.0,
     "entropy_coefficients": [0.2, 0.2],
     "gumbel": {"schedule": "linear_then_constant", "start": 1.0, "end": 0.1,
-               "first_update": 1, "last_anneal_update": 500000},
+               "first_update": 0, "last_anneal_update": 500000},
     "update_order": ["one joint twin-critic optimizer step", "one actor optimizer step with critics frozen", "one Polyak update of both targets"],
     "target_initialization": "exact frozen copy of online critics",
     "target_update_formula": "target = (1-tau)*target + tau*online",
@@ -102,17 +104,18 @@ def _configuration(config: dict[str, Any] | None = None) -> dict[str, Any]:
             raise ValueError(f"{name} must be {value} for this reference contract")
     if out["activation"] != "relu":
         raise ValueError("This reference implements activation='relu' only")
-    widths = out["hidden_sizes"]
-    if (not isinstance(widths, (list, tuple)) or len(widths) != 2
-            or any(not isinstance(v, int) or isinstance(v, bool) or v <= 0 for v in widths)):
-        raise ValueError("hidden_sizes must contain two positive integer widths")
+    for key in ("hidden_sizes", "independent_hidden_sizes"):
+        if not _same_semantics(out[key], DEFAULTS[key]):
+            raise ValueError(f"{key} must be {DEFAULTS[key]} for the current manuscript contract")
     bounds = out["log_std_bounds"]
     if (not isinstance(bounds, (list, tuple)) or len(bounds) != 2
             or not all(isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v) for v in bounds)
             or bounds[0] >= bounds[1]):
         raise ValueError("log_std_bounds must contain two finite increasing values")
-    if optimizer["name"] != "Adam":
-        raise ValueError("This reference implements the Adam optimizer only")
+    if not _same_semantics(bounds, DEFAULTS["log_std_bounds"]):
+        raise ValueError("The manuscript reference log_std_bounds are [-5.0, 2.0]")
+    if not _same_semantics(optimizer, DEFAULTS["optimizer"]):
+        raise ValueError("The manuscript requires AdamW(lr=3e-4, betas=(0.9,0.999), eps=1e-8, weight_decay=0)")
     for field in ("lr", "eps"):
         value = optimizer[field]
         if not isinstance(value, (int, float)) or isinstance(value, bool) or not math.isfinite(value) or value <= 0:
@@ -126,6 +129,11 @@ def _configuration(config: dict[str, Any] | None = None) -> dict[str, Any]:
     if not isinstance(decay, (int, float)) or isinstance(decay, bool) or not math.isfinite(decay) or decay < 0:
         raise ValueError("optimizer.weight_decay must be finite and nonnegative")
     return out
+
+
+def _widths(settings: dict[str, Any], method: str) -> tuple[int, int]:
+    key = "independent_hidden_sizes" if method in ("Independent", "Independent-1M") else "hidden_sizes"
+    return tuple(settings[key])
 
 
 def _roles(method: str) -> dict[str, str]:
@@ -151,7 +159,8 @@ def model_spec(method: str = "H", config: dict[str, Any] | None = None) -> dict[
         "fixed_contract": deepcopy(FIXED_SEMANTICS),
         "controller_encoder": "Identity (zero parameters)",
         "controller_dtype": "float32",
-        "linear_initialization": "PyTorch Linear.reset_parameters: Kaiming-uniform with a=sqrt(5); bias uniform +/-1/sqrt(fan_in)",
+        "linear_initialization": FIXED_SEMANTICS["initialization"],
+        "component_hidden_sizes": list(_widths(settings, method)),
         "critic_input": "28 observation + 25 executed total regional budgets + 20 count one-hot",
         "critic_count_per_component": 2,
         "frozen_target_count_per_component": 2,
@@ -163,7 +172,7 @@ def model_spec(method: str = "H", config: dict[str, Any] | None = None) -> dict[
         "evaluation_count_tie": "smallest candidate count (first argmax)",
         "gumbel_schedule": {
             "start": 1.0, "end": 0.1, "last_decay_update": 500000,
-            "index": "1-based; update 1 has temperature 1.0; update 500000 and later have 0.1",
+            "index": "completed component iterations before update, zero-based; n=499999 gives 0.1000018; n=500000 reaches 0.1",
         },
         "gaps": list(REFERENCE_GAPS),
     }
@@ -172,7 +181,7 @@ def model_spec(method: str = "H", config: dict[str, Any] | None = None) -> dict[
 def parameter_counts(method: str = "H", config: dict[str, Any] | None = None) -> dict[str, Any]:
     """Count bias-inclusive Linear layers without loading a tensor library."""
     settings = _configuration(config)
-    h1, h2 = settings["hidden_sizes"]
+    h1, h2 = _widths(settings, method)
     actor_trunk = (settings["observation_dim"] + 1) * h1 + (h1 + 1) * h2
     critic = (settings["critic_input_dim"] + 1) * h1 + (h1 + 1) * h2 + h2 + 1
     components = {}
@@ -199,9 +208,9 @@ def parameter_counts(method: str = "H", config: dict[str, Any] | None = None) ->
 
 def gumbel_temperature(update_index: int) -> float:
     """Explicit new reference schedule, indexed by component optimizer iteration."""
-    if not isinstance(update_index, int) or isinstance(update_index, bool) or update_index < 1:
-        raise ValueError("update_index must be a positive 1-based integer")
-    fraction = min(update_index - 1, 499999) / 499999
+    if not isinstance(update_index, int) or isinstance(update_index, bool) or update_index < 0:
+        raise ValueError("update_index must be a nonnegative zero-based integer")
+    fraction = min(update_index, 500000) / 500000
     return max(0.1, 1.0 - 0.9 * fraction)
 
 
@@ -228,7 +237,14 @@ def build_controllers(config: dict[str, Any], method: str = "H", *,
             raise ValueError("seed must be a nonnegative integer")
         torch.manual_seed(seed)
 
-    h1, h2 = settings["hidden_sizes"]
+    h1, h2 = _widths(settings, method)
+
+    def initialize(linear, *, hidden: bool):
+        if hidden:
+            nn.init.kaiming_uniform_(linear.weight, nonlinearity="relu")
+        else:
+            nn.init.xavier_uniform_(linear.weight)
+        nn.init.zeros_(linear.bias)
 
     class Actor(nn.Module):
         def __init__(self, role: str):
@@ -239,6 +255,12 @@ def build_controllers(config: dict[str, Any], method: str = "H", *,
             self.mean = nn.Linear(h2, 25, dtype=torch.float32) if role in ("joint", "disclosure") else None
             self.log_std = nn.Linear(h2, 25, dtype=torch.float32) if role in ("joint", "disclosure") else None
             self.logits = nn.Linear(h2, 20, dtype=torch.float32) if role in ("joint", "count") else None
+            for layer in self.trunk:
+                if isinstance(layer, nn.Linear):
+                    initialize(layer, hidden=True)
+            for head in (self.mean, self.log_std, self.logits):
+                if head is not None:
+                    initialize(head, hidden=False)
 
         def forward(self, observation):
             if observation.shape[-1] != 28:
@@ -282,7 +304,9 @@ def build_controllers(config: dict[str, Any], method: str = "H", *,
             temperature = gumbel_temperature(update_index)
             output = self(observation)
             if "mean" in output:
-                distribution = torch.distributions.Normal(output["mean"], output["log_std"].exp())
+                # Keep differentiable casts to the float32 heads; density and
+                # pre-squash sampling use float64 even at rounded endpoints.
+                distribution = torch.distributions.Normal(output["mean"].to(torch.float64), output["log_std"].to(torch.float64).exp())
                 raw = distribution.rsample()
                 output["budgets"] = 1.5 + 1.75 * (raw.tanh() + 1.0)
                 log_tanh_jacobian = 2.0 * (math.log(2.0) - raw - functional.softplus(-2.0 * raw))
@@ -307,6 +331,9 @@ def build_controllers(config: dict[str, Any], method: str = "H", *,
         def __init__(self):
             super().__init__()
             self.network = nn.Sequential(nn.Linear(73, h1, dtype=torch.float32), nn.ReLU(), nn.Linear(h1, h2, dtype=torch.float32), nn.ReLU(), nn.Linear(h2, 1, dtype=torch.float32))
+            for layer in self.network:
+                if isinstance(layer, nn.Linear):
+                    initialize(layer, hidden=layer is not self.network[-1])
 
         def forward(self, executed_state_action):
             if executed_state_action.shape[-1] != 73:
@@ -334,8 +361,8 @@ def build_controllers(config: dict[str, Any], method: str = "H", *,
             raise RuntimeError("Reference implementation and parameter-accounting specification disagree")
         result[name] = {
             **modules,
-            "actor_optimizer": torch.optim.Adam(actor.parameters(), **optimizer_args),
-            "critic_optimizer": torch.optim.Adam(list(critic1.parameters()) + list(critic2.parameters()), **optimizer_args),
+            "actor_optimizer": torch.optim.AdamW(actor.parameters(), **optimizer_args),
+            "critic_optimizer": torch.optim.AdamW(list(critic1.parameters()) + list(critic2.parameters()), **optimizer_args),
             "reference_parameter_counts": expected[name],
             "gamma": 0.0 if method == "CB" else 0.99,
             "gaps": list(REFERENCE_GAPS),

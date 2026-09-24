@@ -24,31 +24,34 @@ class ReferenceContractTests(unittest.TestCase):
 
     def test_parameter_accounting_includes_distinct_targets_and_heads(self):
         joint = parameter_counts()
-        self.assertEqual(joint["trainable"], 81480)
-        self.assertEqual(joint["frozen"], 52226)
-        self.assertEqual(joint["total_including_targets"], 133706)
+        self.assertEqual(joint["trainable"], 261192)
+        self.assertEqual(joint["frozen"], 169986)
+        self.assertEqual(joint["total_including_targets"], 431178)
         independent = parameter_counts("Independent")
-        self.assertEqual(independent["total_including_targets"], 258382)
-        self.assertEqual(independent["frozen"], 2 * joint["frozen"])
-        self.assertEqual(independent["components"]["disclosure"]["actor"], 26674)
-        self.assertEqual(independent["components"]["count"]["actor"], 22804)
+        self.assertEqual(independent["trainable"], 247254)
+        self.assertEqual(independent["frozen"], 167284)
+        self.assertEqual(independent["total_including_targets"], 414538)
+        self.assertEqual(independent["components"]["disclosure"]["actor"], 42550)
+        self.assertEqual(independent["components"]["count"]["actor"], 37420)
+        self.assertEqual(parameter_counts("Disclosure-only")["trainable"], 256052)
+        self.assertEqual(parameter_counts("Count-only")["trainable"], 248342)
         self.assertEqual(parameter_counts("Independent-1M"),
                          {**independent, "method": "Independent-1M"})
 
-    def test_tiny_architecture_can_be_checked_by_hand(self):
-        # Actor: 29*2 + 3*3 + 4*70 = 347. Each critic: 74*2 + 3*3 + 4 = 161.
-        count = parameter_counts(config={"reference_controller": {"hidden_sizes": [2, 3]}})
-        self.assertEqual(count["components"]["joint"]["actor"], 347)
-        self.assertEqual(count["total_including_targets"], 347 + 4 * 161)
+    def test_other_architectures_do_not_silently_use_manuscript_label(self):
+        for key, widths in (("hidden_sizes", [128, 128]), ("independent_hidden_sizes", [256, 256])):
+            with self.assertRaises(ValueError):
+                parameter_counts(config={"reference_controller": {key: widths}})
 
     def test_temperature_has_explicit_endpoints_and_is_monotone(self):
-        self.assertEqual(gumbel_temperature(1), 1.0)
+        self.assertEqual(gumbel_temperature(0), 1.0)
+        self.assertAlmostEqual(gumbel_temperature(499999), 0.1000018)
         self.assertAlmostEqual(gumbel_temperature(500000), 0.1)
         self.assertAlmostEqual(gumbel_temperature(500001), 0.1)
         self.assertAlmostEqual(gumbel_temperature(1000000), 0.1)
         temperatures = [gumbel_temperature(n) for n in (1, 2, 1000, 250000, 499999, 500000)]
         self.assertEqual(temperatures, sorted(temperatures, reverse=True))
-        for invalid in (0, -1, 1.5, True):
+        for invalid in (-1, 1.5, True):
             with self.assertRaises(ValueError):
                 gumbel_temperature(invalid)
 
@@ -80,7 +83,18 @@ class ReferenceContractTests(unittest.TestCase):
     def setUp(self):
         import torch
         self.torch = torch
-        self.config = {"reference_controller": {"hidden_sizes": [4, 4]}}
+        self.config = {}
+
+    @classmethod
+    def setUpClass(cls):
+        import torch
+        cls.old_threads = torch.get_num_threads()
+        torch.set_num_threads(1)
+
+    @classmethod
+    def tearDownClass(cls):
+        import torch
+        torch.set_num_threads(cls.old_threads)
 
     def test_deterministic_action_and_tie_rule(self):
         torch = self.torch
@@ -97,12 +111,13 @@ class ReferenceContractTests(unittest.TestCase):
         bundle = build_controllers(self.config, seed=9)["joint"]
         sample = bundle["actor"].sample(torch.zeros(3, 28), update_index=1)
         raw = sample["raw_budget_sample"]
-        normal = torch.distributions.Normal(sample["mean"], sample["log_std"].exp())
+        normal = torch.distributions.Normal(sample["mean"].double(), sample["log_std"].double().exp())
         expected = (normal.log_prob(raw) - (1 - raw.tanh().square()).log() - math.log(1.75)).sum(-1)
         self.assertTrue(torch.allclose(sample["continuous_log_prob"], expected, atol=1e-4))
         self.assertTrue(torch.all((sample["budgets"] >= 1.5) & (sample["budgets"] <= 5)))
         self.assertEqual(sample["count_one_hot"].sum(-1).tolist(), [1.0] * 3)
         self.assertTrue(sample["continuous_log_prob"].isfinite().all())
+        self.assertEqual(sample["continuous_log_prob"].dtype, torch.float64)
 
     def test_score_function_density_has_fixed_draw_derivative(self):
         torch = self.torch
@@ -110,7 +125,7 @@ class ReferenceContractTests(unittest.TestCase):
         sample = bundle["actor"].sample(torch.zeros(3, 28), update_index=1)
         derivative = torch.autograd.grad(sample["continuous_score_log_prob"].sum(), sample["mean"], retain_graph=True)[0]
         expected = (sample["raw_budget_sample_detached"] - sample["mean"]) / sample["log_std"].exp().square()
-        self.assertTrue(torch.allclose(derivative, expected))
+        self.assertTrue(torch.allclose(derivative.double(), expected.double(), atol=1e-6))
         self.assertTrue(torch.allclose(sample["continuous_score_log_prob"], sample["continuous_log_prob"]))
         self.assertFalse(sample["budgets_detached"].requires_grad)
 
@@ -144,6 +159,25 @@ class ReferenceContractTests(unittest.TestCase):
         joint = metadata["components"]["joint"]
         self.assertEqual(joint["modules"]["target1"]["trainable"], 0)
         self.assertEqual(joint["optimizers"]["actor_optimizer"]["groups"][0]["lr"], 0.0003)
+        self.assertEqual(joint["optimizers"]["actor_optimizer"]["class"], "AdamW")
+
+    def test_initialization_bounds_zero_bias_and_exact_target_copy(self):
+        torch = self.torch
+        bundle = build_controllers({}, seed=22)["joint"]
+        for name in ("actor", "critic1", "critic2"):
+            module = bundle[name]
+            for key, layer in module.named_modules():
+                if not isinstance(layer, torch.nn.Linear):
+                    continue
+                self.assertTrue(torch.all(layer.bias == 0))
+                is_output = key in ("mean", "log_std", "logits", "network.4")
+                bound = math.sqrt(6 / (layer.in_features + layer.out_features)) if is_output else math.sqrt(6 / layer.in_features)
+                self.assertLessEqual(float(layer.weight.detach().abs().max()), bound)
+        for source, target in (("critic1", "target1"), ("critic2", "target2")):
+            for online, copied in zip(bundle[source].parameters(), bundle[target].parameters()):
+                torch.testing.assert_close(online, copied, rtol=0, atol=0)
+                self.assertIsNot(online, copied)
+                self.assertFalse(copied.requires_grad)
 
 
 if __name__ == "__main__":

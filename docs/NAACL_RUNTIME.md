@@ -95,7 +95,7 @@ padding; recorded rows with `eligible:false` become task padding. Target boxes
 enter offline correctness and reward only, never the executor or allocator.
 
 ```bash
-bbs collect-grounding --manifest data/train.jsonl --model runs/task-adapter/merged_model --tokenizer models/qwen-base --projection runs/task-adapter/projection.npy --output runs/behavior --device cuda --dtype bfloat16
+bbs collect-grounding --manifest data/train.jsonl --model runs/task-adapter/merged_model --tokenizer models/qwen-base --projection runs/task-adapter/projection.npy --family-id f1 --disable-retrieval --output runs/behavior --device cuda --dtype bfloat16
 ```
 
 For screenshot manifests, additionally supply `--dino-model`, `--dino-revision`
@@ -104,11 +104,11 @@ matrix, distinct from the learned Qwen projection. DINOv2-base has encoder
 dimension 768. The `features.public_projection` library function creates a
 seeded orthonormal public projection; record and reuse the same saved matrix.
 
-Collection uses a public behavior policy: regional budget proposals uniformly
+Collection requires `--family-id` and explicit retrieval configuration. The command shown below is a retrieval-disabled ablation. Collection uses a public behavior policy: regional budget proposals uniformly
 sampled from `[1.5,5]`, and candidate count uniformly from `1..20`. Private
 Gaussian randomizers use separate secret streams. Public decoder seeds are
 keyed by example/trajectory, slot, and candidate index so candidate prefixes
-remain paired when candidate count changes. Retrieval is disabled in this CLI.
+remain paired when candidate count changes. Retrieval uses `--retrieval-bank`, `--retrieval-keys`, and a development-selected `--retrieval-threshold` in 0,.25,...,2. Alternatively pass `--disable-retrieval` explicitly. Banks are immutable and query only completed refinement latents; see [artifact contracts](action-retrieval.md).
 
 Outputs include `run.json`, `transcript.jsonl`, `candidates.jsonl`, completed
 refinement arrays in `releases/`, and a **trusted-side** `replay.npz`.
@@ -119,79 +119,45 @@ distribute replay observations: their 25 entropy components come from private
 probes and are outside the public transcript contract. Keep evaluation labels
 and private training records separate when exporting mechanism outputs.
 
-## 4. Immutable replay and controller training
+## 4. Current controller fitting and development selection
 
-The collector writes these NPZ arrays; `N` counts invoked transitions:
+The current profile enforces joint/standalone 2×256 and Independent 2×170 per role; AdamW3e-4/(.9,.999)/1e-8/wd0; hidden Kaiming/ReLU, output Xavier, zero biases; critic→actor→Polyak .005. Completed iteration n starts at zero for `max(.1,1-.9*n/500000)`. CB never evaluates successor proposals/target critics but retains exhaustion-tail reward. Online/target/stored totals are 261192/169986/431178 for H/CB and 247254/167284/414538 for combined Independent.
 
-| Key | Shape/type | Meaning |
-|---|---|---|
-| `observation`, `next_observation` | `[N,28]`, numeric | 25 probe entropies, protected feedback, cap fraction, time |
-| `executed_budgets` | `[N,25]`, numeric | Total probe-plus-refinement budgets in `[1.5,5]` |
-| `candidate_count` | `[N]`, integer | Executed count in `1..20` |
-| `reward` | `[N]`, numeric | Correctness/resource reward, including any terminal exhaustion-tail adjustment |
-| `terminal`, `success` | `[N]`, boolean | Successor termination and correctness stratum |
-| `remaining_budget`, `next_remaining_budget` | `[N]`, numeric | Absolute filter metadata; excluded from the actor input |
+Replay requires both strata and at most 1M immutable transitions. New collection writes Unicode `slot_id`, `next_slot_id`, `task`, `family_id`, `source_manifest_sha256` alongside numeric arrays. IDs are compact JSON `[trajectory_id,zero_based_slot]`; terminal next ID is empty. Success is the new collector's transition correctness (Action joint component correctness), not a recovered historical stratum definition.
 
-The replay is immutable, limited to one million transitions, and must contain
-both success and failure strata. Sampling chooses success/failure with
-probability `0.7/0.3`, then draws uniformly with replacement within that stratum.
-Use a separate fixed training population for each task/family; keep evaluation
-examples out of fitting and replay construction.
+Standard fitting requires batch256, explicit family/task and a development manifest disjoint from replay trajectories. For a **retrieval-disabled ablation**:
 
 ```bash
-bbs train --config configs/naacl_reference.json --replay runs/behavior/replay.npz --method H --updates 1000000 --batch-size 256 --device cuda --output runs/H-f1
-bbs train --config configs/naacl_reference.json --replay runs/behavior/replay.npz --method CB --updates 1000000 --batch-size 256 --device cuda --output runs/CB-f1
-bbs train --config configs/naacl_reference.json --replay runs/behavior/replay.npz --method Independent --updates 500000 --batch-size 256 --device cuda --output runs/Independent-f1
-bbs train --config configs/naacl_reference.json --replay runs/behavior/replay.npz --method Independent-1M --updates 1000000 --batch-size 256 --device cuda --output runs/Independent-1M-f1
+bbs train --config configs/naacl_reference.json --replay runs/behavior/replay.npz --method H --updates 1000000 --task G --family-id f1 --dev-manifest data/dev.jsonl --model models/fitted-G --tokenizer models/qwen-base --projection models/projection-G.npy --disable-retrieval --output runs/H-f1
 ```
 
-`--updates` means **additional iterations per component**, not an aggregate
-method budget. One Independent iteration updates each of its two separately
-fitted controllers. Thus 500k gives 1M aggregate component iterations; 1M gives
-2M. Components use fixed complementary decisions while fitting (budget 3.0 or
-count 5), and their learned heads are composed at evaluation without joint
-fine-tuning.
+For the full retrieved method replace `--disable-retrieval` with frozen bank/key/threshold arguments. Every 10k iterations, the current deterministic policy runs its own development ledger/feedback. Selection maximizes gamma-.99 eligible-horizon return with equal trajectory/replicate weighting. Ties prefer lower eligible regional budget, lower eligible candidate count, then earlier iteration. Exhausted eligible slots contribute -1. Development repeats default to three and are recorded.
 
-The default architecture is an identity encoder with two 128-wide ReLU layers.
-Total parameters, including actor, online critics, and target critics, are
-133,706 for H/CB and 258,382 for Independent. Those are actual counts for this
-new architecture, not manuscript counts or a capacity-matched comparison.
-`modules.json` records the instantiated modules and counts.
+Outputs include `selected.pt`, `last.pt`, `selection.json`, `selected-development.jsonl`, `selected-development-run.json`, configuration, counts, optimizer logs and provenance. A run before the first selection interval has no selected model. Resume only the same output directory's `last.pt`, retaining every input/binding. `--updates` adds iterations per component. `--software-only` is for synthetic fixtures, permits smaller batches, and saves only `checkpoint.pt`; it is not a manuscript experiment mode.
 
-Each component iteration performs one twin-critic optimizer step, one actor
-step, and one Polyak target update. Adam uses `3e-4`, `(0.9,0.999)`, epsilon
-`1e-8`, no weight decay; gradient norm is clipped at 1. Discounts are 0.99 for H
-and 0 for CB, Polyak tau is 0.005, and both entropy coefficients are 0.2.
-Gumbel temperature decreases linearly from 1.0 to 0.1 over updates 1–500k and
-then stays constant. These architecture/optimizer/schedule choices are explicit
-new defaults where historical runtime settings were unavailable.
+## 5. TMS, evaluation and repeat protocol
 
-Training writes `config.json`, `modules.json`, `training.jsonl`, `run.json`, and
-`checkpoint.pt`. Resume with `--resume runs/H-f1/checkpoint.pt`, the same method,
-configuration and replay, and a **new** output directory. The checkpoint includes
-optimizer/target states, sampler/RNG state, and component counters. Resume does
-not repeat the requested total: `--updates` adds that many iterations.
-
-## 5. Evaluate on a separate Grounding manifest
-
-There is no separate `eval` subcommand. Adding a controller checkpoint to
-`collect-grounding` performs frozen-controller evaluation:
+TMS uses the paired selected H development measurements, never constants 3/5. Build a separate population schedule for each split:
 
 ```bash
-bbs collect-grounding --manifest data/test.jsonl --model runs/task-adapter/merged_model --tokenizer models/qwen-base --projection runs/task-adapter/projection.npy --controller-checkpoint runs/H-f1/checkpoint.pt --controller-config configs/naacl_reference.json --controller-method H --training-replay runs/behavior/replay.npz --output runs/H-f1-eval-r1 --device cuda --dtype bfloat16
+bbs build-tms --manifest data/train.jsonl --population fit-train --development-transcript runs/H-f1/selected-development.jsonl --development-run runs/H-f1/selected-development-run.json --development-manifest data/dev.jsonl --selected-h-checkpoint runs/H-f1/selected.pt --family-id f1 --task G --public-hash-seed YOUR_COMMITTED_64_HEX_SEED --output data/tms-train.json
 ```
 
-The training replay is supplied to validate checkpoint binding, not to refit
-during evaluation. Accuracy includes all eligible examples; invalid and
-budget-exhausted outputs score zero. Every trajectory produces 56 records.
-Evaluation outputs do not append new observations to the training replay.
+Supply a real committed seed. H/development/task/family/checkpoint/manifest/trace linkage and the complete fixed-slot grid are checked. Budget is H's active-release regional mean; count uses public hash-ordered floor/ceiling assignment with half-up rounding across the complete population. Filtering still uses the method's own remaining budget.
 
-The CLI saves the **last controller checkpoint**. It does not implement the
-development-selection procedure described as a planned setting in the JSON
-profile, nor automatically run or aggregate ten families × three replicates.
-Assign distinct fitting/evaluation run IDs, use fixed manifests and paired
-public decoder indices, and compute any family-level statistics from the new
-exported results. No command imports old paper accuracies or GPU-hours.
+The checkpoint must also match the best entry in `selection.json` beside it (or the explicitly supplied `--selection-state`). An arbitrary last checkpoint evaluated with `--split development` cannot be relabeled as selected H.
+
+Independent requires `--tms-schedule data/tms-train.json`, 500k iterations per component. Independent-1M uses 1M per component. Current and successor proposals pair with fixed complementary TMS; replay actions/rewards remain unchanged. Evaluation combines learned heads without joint fine-tuning. Disclosure-only/Count-only use width256 and 1M iterations; fitting also requires `--dev-tms-schedule`, and evaluation requires `--evaluation-tms-schedule`. Missing or mismatched schedules fail before optimization or private access.
+
+```bash
+bbs collect-grounding --manifest data/test.jsonl --model models/fitted-G --tokenizer models/qwen-base --projection models/projection-G.npy --family-id f1 --replicate-id 1 --split test --disable-retrieval --controller-checkpoint runs/H-f1/selected.pt --controller-config configs/naacl_reference.json --training-replay runs/behavior/replay.npz --output runs/H-f1-r1
+```
+
+The example is retrieval-disabled. Supply `--controller-method` for non-H checkpoints and the training TMS artifact when required to verify their bindings. A TMS-only run supplies `--evaluation-tms-schedule` without a controller. Evaluation never extends replay. All eligible failures/abstentions stay in the denominator.
+
+`collect-action` provides the Action execution path with explicit `--action-schema` and `--action-evaluator module:function`. The callable receives prediction and offline ActionSlot and returns ActionScores(function,arguments,status); it never feeds labels to the controller/executor. Official schema/scorer are supplied and hashed, not guessed. See [Action and retrieval schemas](action-retrieval.md).
+
+`bbs protocol --registry registry.json --output-root ABSOLUTE_RUNS_DIR` validates and prints a ten-family, three-post-fit-evaluation plan. It does not execute by default; `--execute` explicitly starts registered jobs. Plans start from supplied frozen family/task executors and do not establish ten complete refits. See [registry, pairing and stage boundaries](MANUSCRIPT_PROTOCOL.md).
 
 ## 6. Selection, prompt, and privacy contracts
 
@@ -218,8 +184,7 @@ IDs** for that scoring text. Those standalone IDs need not equal a substring of
 the complete prompt's token IDs because tokenization can depend on the boundary.
 Use the logged scoring IDs for exact scorer replay. The 4096-token cap covers
 the complete model input; the current instruction is never silently truncated.
-Prompt/history utilities exist for Action, but its complete CLI evaluator is not
-implemented.
+`collect-action` uses preceding reference-record thoughts, the explicit schema/scorer, and the same complete-input token cap. Mandatory current-only prompts and canonical references are checked before private screen access.
 
 Privacy admission runs before screen encoding or probing. The public cap is
 `75 * eligible_slots`, at most 4200. A slot needs 37.5 remaining budget; an
@@ -235,3 +200,12 @@ it is not arbitrary-screen or training-record DP. Secret-seeded NumPy noise is
 research numerics, not cryptographic, finite-precision DP certification. Never
 publish private seeds/state, clean features, probes, or trusted replay arrays as
 if they were protected public transcript fields.
+
+
+## 7. Provenance and supplied inputs
+
+Local model/tokenizer/DINO snapshot bytes and projection/bank/schema/evaluator files are hashed. Remote downloads, including DINO, require explicit permission via `--allow-download` and pinned revisions. Each run binds controller/config/replay/TMS and evaluation manifest. A combined bank exclusion manifest can be passed with `--retrieval-exclusion-manifest`; the current population must be contained in it. The developer-selected gate helper is `selection.select_retrieval_threshold`, evaluating 0,.25,...,2 and preferring the larger threshold on return ties.
+
+Private input bytes are read and hashed only after public admission. These hashes are retained in `trusted-inputs.json` and must remain local alongside trusted replay. Errors after release retain spent-budget records and withhold aggregate accuracy. Public decoder indices bind seed/family/task/replicate/trajectory/slot/candidate and omit method for pairing; this explicit new serialization does not recover historical streams.
+
+The author confirmed one RTX 5090. CPU unit checks do not establish original GPU timings, CUDA versions, or benchmark accuracy. Dataset extraction, exact split/component bindings, official Action scorer, bank source records, same-screen population and actual family artifacts are explicit inputs. The code does not fabricate them or import paper table constants.

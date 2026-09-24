@@ -75,6 +75,38 @@ class RuntimeTests(unittest.TestCase):
                 self.assertEqual(data['observation'].shape,(1,28));self.assertEqual(data['success'].dtype,np.bool_)
             with self.assertRaises(FileExistsError):save_replay(records,path)
 
+    def test_replay_preserves_public_population_bindings_without_pickle(self):
+        _, records=run_trajectory([Slot('click',(.4,.4,.6,.6))],lambda t:np.zeros((25,256)),
+            lambda o:(np.full(25,1.5),1),lambda *args:Prediction((.5,.5),0))
+        records[0].update(slot_id='["trajectory",0]', next_slot_id='',
+                          source_manifest_sha256='a'*64, task='G', family_id='family-1')
+        with tempfile.TemporaryDirectory() as folder:
+            path=Path(folder)/'replay.npz';save_replay(records,path)
+            with np.load(path,allow_pickle=False) as data:
+                for key in ('slot_id','next_slot_id','source_manifest_sha256','task','family_id'):
+                    self.assertEqual(data[key].dtype.kind,'U')
+                    self.assertEqual(data[key][0],records[0][key])
+
+    def test_inference_helper_delegates_joint_and_standalone_with_explicit_ids(self):
+        import torch
+        from types import SimpleNamespace
+        from gui_joint_control.runtime import inference_allocator
+        calls=[]
+        schedule=object()
+        def proposal(state, *, slot_ids, tms_schedule):
+            calls.append((state.shape,slot_ids,tms_schedule))
+            return {'budgets':torch.full((1,25),2.), 'candidate_count':torch.tensor([7])}
+        trainer=SimpleNamespace(device='cpu', proposal_action=proposal)
+        joint=inference_allocator(trainer)
+        budgets,count=joint(np.zeros(28))
+        self.assertEqual(count,7);self.assertTrue(np.all(budgets==2))
+        self.assertEqual(calls[-1],(torch.Size([1,28]),None,None))
+        standalone=inference_allocator(trainer,slot_id_provider=lambda observation:'public-slot',tms_schedule=schedule)
+        standalone(np.zeros(28))
+        self.assertEqual(calls[-1],(torch.Size([1,28]),['public-slot'],schedule))
+        with self.assertRaisesRegex(ValueError,'nonempty public ID'):
+            inference_allocator(trainer,slot_id_provider=lambda observation:None)(np.zeros(28))
+
     def test_projection_orthogonal_and_regions_have_expected_shape(self):
         projection=public_projection(seed=1,encoder_dim=256)
         np.testing.assert_allclose(projection@projection.T,np.eye(256),atol=1e-12)

@@ -50,10 +50,10 @@ class DinoRegionalEncoder:
         return features.cpu().numpy().astype(np.float64)
 
     @classmethod
-    def from_pretrained(cls,model_id,revision,projection_path,device='cpu'):
+    def from_pretrained(cls,model_id,revision,projection_path,device='cpu',*,local_files_only=True):
         from transformers import AutoModel
         if not Path(model_id).is_dir() and (not revision or len(revision)!=40 or any(c not in '0123456789abcdef' for c in revision.lower())):
             raise ValueError("Remote model requires an immutable 40-hex revision")
         projection=np.load(projection_path,allow_pickle=False)
-        model=AutoModel.from_pretrained(model_id,revision=revision,trust_remote_code=False)
+        model=AutoModel.from_pretrained(model_id,revision=revision,trust_remote_code=False,local_files_only=local_files_only)
         return cls(model,projection,device)

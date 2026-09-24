@@ -1,218 +1,94 @@
 # 🖥️ Blind but Smart
 
-**Joint disclosure-budget and candidate-count control for GUI instruction grounding.**
+**Joint disclosure-budget and candidate-count control for GUI instruction grounding and action prediction.**
 
-[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB?logo=python&logoColor=white)](pyproject.toml)
-[![PyTorch 2.6+](https://img.shields.io/badge/PyTorch-2.6%2B-EE4C2C?logo=pytorch&logoColor=white)](pyproject.toml)
 [![Runtime tests](https://github.com/BitAdventurer/blind-but-smart/actions/workflows/runtime-tests.yml/badge.svg?branch=main)](https://github.com/BitAdventurer/blind-but-smart/actions/workflows/runtime-tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2B7A78.svg)](LICENSE)
 
-A reference implementation for studying how a GUI agent can allocate limited visual disclosure and decoding effort together. A controller chooses regional disclosure budgets and the number of instruction-conditioned candidates; a frozen vision–language executor operates on one shared, noise-refined visual release.
+This runtime implements the current author-specified JDC controller and recorded-screen execution contracts. A controller chooses regional disclosure budgets and candidate count; a frozen Qwen2.5-VL executor uses one shared refinement release. The implementation supports new experiments. It does not recover historical weights or establish reproduction of reported measurements.
 
-[Overview](#-overview) · [Quick Start](#-quick-start) · [Usage](#%EF%B8%8F-usage) · [Runtime Guide](docs/NAACL_RUNTIME.md) · [Scope](#-scope-and-reproducibility)
+<p align="center"><img src="docs/assets/runtime-overview.svg" alt="A private probe drives joint allocation, followed by one shared refinement release and a frozen executor." width="1200"/></p>
 
-## 📌 Overview
+Admission precedes private screen access. The probe guides allocation, fresh Gaussian noise creates the refinement, and every candidate and retrieval query uses that completed release. The code evaluates recorded screens; it does not operate a live desktop.
 
-GUI grounding asks an agent to locate the screen element described by an instruction. This project studies two coupled decisions: **how much visual evidence to release** and **how many output candidates to generate from that evidence**.
+## Implemented workflow
 
-<p align="center">
-  <img src="docs/assets/runtime-overview.svg" alt="Runtime overview: a trusted local probe and joint controller produce a budgeted release; a frozen executor generates and selects candidates from that shared release and a public instruction." width="1200"/>
-</p>
+- Projection alignment and task-specific language q/v LoRA fitting.
+- H, CB, Disclosure-only, Count-only, Independent and Independent-1M controllers.
+- Immutable replay, explicit development-derived TMS schedules, resumable optimizer/RNG checkpoints.
+- Development selection every 10,000 iterations, with separate selected and last states.
+- Released-input Grounding and Action execution; Action requires a supplied frozen schema and pinned evaluator.
+- Frozen Train-only retrieval, global public exclusion views and release-only queries.
+- Explicit ten-family controller plans and three evaluations per fitted checkpoint.
 
-The admission check precedes private screen access. An admitted step uses a private probe to guide allocation, then creates a Gaussian-refined release. All candidates at that step share this release. Candidate selection combines output likelihood, instruction relevance, and weighted-medoid aggregation.
+Read the [runtime guide](docs/NAACL_RUNTIME.md), [Action and retrieval schemas](docs/action-retrieval.md), [family protocol](docs/MANUSCRIPT_PROTOCOL.md), and [alignment notes](docs/MANUSCRIPT_ALIGNMENT.md).
 
-The workflow evaluates **recorded screens**. Predicted coordinates are scored against held-out annotations; the CLI does not interact with a live desktop.
+## Install and check
 
-## ✨ Key Features
-
-- **Joint resource control:** learn regional disclosure budgets and candidate counts with H; compare with CB and separately fitted Independent controllers.
-- **Accounted visual release:** 25 regions, separate probe/refinement noise, admission filtering, budget exhaustion handling, and a fixed 56-slot transcript.
-- **Released-input execution:** fit a visual projection and language LoRA, then freeze the Qwen executor during controller fitting and evaluation.
-- **Deterministic candidate selection:** float64 relevance scoring and weighted-medoid aggregation, with explicit prompt and candidate records for replay.
-- **Traceable training:** immutable replay inputs, configuration and input hashes, per-component update counters, and resumable checkpoints.
-- **Automated software checks:** CPU tests covering privacy accounting, selection, prompts, tiny Qwen integration, fitting, controller updates, and resume behavior.
-
-## 📁 Project Structure
-
-```text
-blind-but-smart/
-├── README.md
-├── LICENSE
-├── pyproject.toml                   # Package, dependencies, and bbs command
-├── configs/
-│   └── naacl_reference.json          # Explicit reference training settings
-├── docs/
-│   ├── NAACL_RUNTIME.md              # Full commands, schemas, and contracts
-│   └── assets/runtime-overview.svg
-├── src/gui_joint_control/
-│   ├── cli.py                       # Fitting, collection, training, and smoke
-│   ├── features.py                  # Regional DINO features and projection
-│   ├── privacy.py                   # Probe, refinement, and budget ledger
-│   ├── executor.py                  # Frozen released-input Qwen execution
-│   ├── fitting.py                   # Projection alignment and LoRA fitting
-│   ├── controller.py / trainer.py   # H, CB, and Independent controllers
-│   ├── replay.py / runtime.py       # Immutable replay and trajectory execution
-│   └── scoring.py / prompt_policy.py
-├── tests/                           # CPU software tests
-└── .github/workflows/               # Continuous integration
-```
-
-## 🚀 Quick Start
-
-### 1. Clone and create an environment
-
-Use Python **3.11 or newer**; CI uses Python 3.12.
-
-```bash
-git clone https://github.com/BitAdventurer/blind-but-smart.git
-cd blind-but-smart
-python -m venv .venv
-```
-
-Activate the environment for your shell:
-
-```bash
-# Linux / macOS
-source .venv/bin/activate
-```
-
-```powershell
-# Windows PowerShell
-.\.venv\Scripts\Activate.ps1
-```
-
-### 2. Install and check
-
-Install a PyTorch build appropriate for your CPU or CUDA device, then install the project:
+Use Python 3.11+ (CI uses 3.12), create a virtual environment, and install an appropriate CPU/CUDA PyTorch build. Then:
 
 ```bash
 python -m pip install -e ".[vlm,test]"
 bbs --help
-python -m pytest tests
-```
-
-The VLM integration pins `transformers==4.57.6` and `peft==0.18.1`.
-
-### 3. Run the CPU smoke check
-
-```bash
+python -m pytest tests -q
 bbs smoke --output runs/software-smoke --updates 3
 ```
 
-This checks collection, replay, three controller updates, and checkpoint writing using a **synthetic software fixture**. It requires no benchmark data or 7B model download and does not produce a benchmark score. Use a fresh output directory each time.
+Smoke uses synthetic data and three CPU controller updates. It downloads no model weights and produces no benchmark score. Use a new output directory. VLM integration pins Transformers 4.57.6 and PEFT 0.18.1. Tiny Qwen tests instantiate small random models only as software fixtures.
 
-## 🗂️ Data and Model Preparation
+## Current controller specification
 
-Datasets and model weights are supplied separately. Keep local inputs under `data/`, model snapshots under `models/`, and generated artifacts under `runs/`; these directories are ignored by Git.
-
-| Workflow | Required inputs |
+| Setting | Value |
 |---|---|
-| Projection alignment | NPZ with trusted `[N,25,256]` features and aligned native visual targets |
-| Task adapter fitting | JSONL with feature paths and canonical prompt/target token IDs; pinned base model and projection |
-| Grounding collection/evaluation | JSONL manifest with trajectory, slot, instruction, eligibility, target box, and feature or image path |
-| Controller fitting | Immutable replay NPZ produced by behavior collection, plus the reference configuration |
+| Screen / observation / critic input | 25×256 / 28 / 73 dimensions |
+| H, CB and standalone hidden layers | Two 256-wide ReLU layers |
+| Independent hidden layers | Separate two-layer 170-wide networks per role |
+| Initialization | Hidden Kaiming-uniform/ReLU, output Xavier-uniform, zero biases |
+| Optimizer | AdamW; lr 3e-4; betas (.9,.999); eps 1e-8; weight decay 0 |
+| Update order | Joint twin-critic step → actor step → Polyak 0.005 |
+| Gumbel temperature | max(.10, 1 − .90 n / 500000), completed iterations n starts at 0 |
+| Evaluation | Budget means and smallest count argmax; no Gumbel |
+| Discounts | H .99; CB bootstrap 0; checkpoint return .99 |
+| Replay | Immutable; capacity 1M; 70/30 success/failure; batch256 |
+| Numeric rules | Float32 controller/optimizer; float64 density and accounting |
 
-Example Grounding manifest record:
+| Controller | Online | Targets | Total stored |
+|---|---:|---:|---:|
+| H / CB | 261,192 | 169,986 | 431,178 |
+| Independent, both components | 247,254 | 167,284 | 414,538 |
+
+Counts exclude frozen vision/language models and projection. Independent is not exactly capacity- or compute-matched to H. The old 128-wide/Adam profile and version1 checkpoints are rejected rather than silently relabeled.
+
+## Inputs and example commands
+
+Supply data, immutable model/tokenizer snapshots, fitted projection and adapter weights separately. Keep them in ignored `data/`, `models/` and `runs/`. Example Grounding row:
 
 ```json
-{"trajectory_id":"train-001","slot":0,"task":"G","instruction":"Click the Save button.","target_box":[0.10,0.20,0.16,0.25],"features_path":"features/train-001-00.npy","eligible":true}
+{"trajectory_id":"train-001","slot":0,"task":"G","instruction":"Click Save.","target_box":[0.1,0.2,0.16,0.25],"features_path":"features/train-001-00.npy","eligible":true}
 ```
 
-Feature paths are relative to the manifest; coordinates are normalized to `[0,1]`. Target boxes are used for offline scoring and rewards, not as executor or allocator inputs. Training and evaluation must use separate fixed manifests.
+Feature files have shape [25,256]. Paths are relative to the manifest. Train and development must have disjoint trajectory IDs. Reference targets enter offline scoring only.
 
-See the [runtime guide](docs/NAACL_RUNTIME.md) for complete schemas, screenshot encoding options, tokenizer binding, and model revision requirements. Native visual alignment targets must be prepared before Stage 1.
-
-## ⚙️ Usage
-
-### Workflow entry points
-
-| Step | Command | Purpose |
-|---|---|---|
-| 1 | `bbs fit-projection` | Align regional features to precomputed native visual targets |
-| 2 | `bbs fit-adapter` | Fit the projection and language query/value LoRA |
-| 3 | `bbs collect-grounding` | Collect behavior records with the frozen executor |
-| 4 | `bbs train` | Fit a controller from the immutable replay |
-| 5 | `bbs collect-grounding --controller-checkpoint ...` | Evaluate a frozen controller on a separate manifest |
-
-Run each command with `--help` for its arguments. The [runtime guide](docs/NAACL_RUNTIME.md) provides the complete ordered workflow.
-
-### Train a controller
-
-After behavior collection has created `runs/behavior/replay.npz`:
+The full retrieved method requires bank/key artifacts, a development-selected threshold and complete public exclusion metadata. `--disable-retrieval` is an explicit ablation. The following **retrieval-disabled** examples assume all fitted artifacts already exist:
 
 ```bash
-bbs train --config configs/naacl_reference.json --replay runs/behavior/replay.npz --method H --updates 1000000 --batch-size 256 --device cuda --output runs/H-f1
+bbs collect-grounding --manifest data/train.jsonl --model models/fitted-G --tokenizer models/qwen-base --projection models/projection-G.npy --family-id f1 --disable-retrieval --output runs/G-f1-behavior
+bbs train --config configs/naacl_reference.json --replay runs/G-f1-behavior/replay.npz --method H --updates 1000000 --family-id f1 --task G --dev-manifest data/dev.jsonl --model models/fitted-G --tokenizer models/qwen-base --projection models/projection-G.npy --disable-retrieval --output runs/G-f1-H
+bbs collect-grounding --manifest data/test.jsonl --model models/fitted-G --tokenizer models/qwen-base --projection models/projection-G.npy --family-id f1 --replicate-id 1 --split test --disable-retrieval --controller-checkpoint runs/G-f1-H/selected.pt --controller-config configs/naacl_reference.json --training-replay runs/G-f1-behavior/replay.npz --output runs/G-f1-H-r1
 ```
 
-| Method | Controller structure | Example updates per component | Aggregate component iterations |
-|---|---|---:|---:|
-| `H` | Joint disclosure and count control | 1,000,000 | 1,000,000 |
-| `CB` | Joint controller with zero discount | 1,000,000 | 1,000,000 |
-| `Independent` | Two separately fitted controllers | 500,000 | 1,000,000 |
-| `Independent-1M` | The same two-controller structure | 1,000,000 | 2,000,000 |
+These are examples, not commands run by installation. For VLM execution on suitable hardware add `--device cuda --dtype bfloat16`. The author reports one RTX 5090 for the paper; CPU software checks do not establish performance or memory use on that GPU.
 
-`--updates` is required and means **additional iterations per component**, including on resume. Each Independent component is fitted with a fixed complementary decision; learned heads are composed for evaluation without joint fine-tuning. Method names do not automatically set the update count.
+Independent uses 500k additional iterations per component (1M aggregate); Independent-1M uses 1M per component (2M aggregate). Both require a training TMS artifact derived from the paired selected H development trace. Standalone methods also need population-specific development and evaluation TMS schedules.
 
-### Evaluate a frozen controller
+## Outputs and scope
 
-Use the merged adapter model with its corresponding projection and the original tokenizer snapshot:
+`selected.pt` is selected on development return; `last.pt` is the latest resumable state. `selection.json` records checksums and evaluations. Selected development traces are exported for TMS construction. A run shorter than the first 10k interval has no selected model.
 
-```bash
-bbs collect-grounding --manifest data/test.jsonl --model runs/task-adapter/merged_model --tokenizer models/qwen-base --projection runs/task-adapter/projection.npy --controller-checkpoint runs/H-f1/checkpoint.pt --controller-config configs/naacl_reference.json --controller-method H --training-replay runs/behavior/replay.npz --output runs/H-f1-eval-r1 --device cuda --dtype bfloat16
-```
+Evaluation writes provenance, fixed-slot local records, candidates and completed releases. Behavior collection also writes immutable replay with slot/task/family/source-manifest bindings. Local logs contain labels. Replay, private-input hashes and private randomizer states are trusted local artifacts, not protected public mechanism output.
 
-The training replay validates checkpoint binding; it is not updated during evaluation. Accuracy uses all eligible examples, with invalid and budget-exhausted outputs scored as zero. The merged-model export does not include tokenizer files, so the separate tokenizer path is required.
+The family planner starts with supplied frozen family/task executors; it does not itself establish ten complete executor refits. Dataset adapters, official Action schema/scorer, same-screen construction and actual run bindings must be supplied explicitly. They are not inferred from tables. This runtime contains no prepopulated benchmark scores.
 
-## 🔧 Reference Configuration
-
-The controller profile is defined in [`configs/naacl_reference.json`](configs/naacl_reference.json). The [execution contract](docs/NAACL_RUNTIME.md#6-selection-prompt-and-privacy-contracts) documents scoring and privacy constants.
-
-| Setting | Reference value |
-|---|---|
-| Screen representation | 25 regions × 256 dimensions |
-| Controller observation | 28 dimensions |
-| Controller hidden layers | Two 128-wide ReLU layers |
-| Candidate count | 1–20 |
-| Executed regional budget | 1.5–5.0, including probe cost 1.0 |
-| Public trajectory cap | `75 × eligible slots`, at most 4,200 |
-| Transcript length | 56 slots |
-| Controller optimizer | Adam, learning rate `3e-4` |
-| Discount | H: `0.99`; CB: `0.0` |
-| Replay batch size | 256 |
-
-The default architecture has **133,706 controller parameters for H/CB** and **258,382 for Independent**, including target critics. These are counts for this implementation; the default comparison is not capacity-matched.
-
-## 📊 Outputs
-
-| Artifact | Contents |
-|---|---|
-| `run.json` | Run identity, software versions, input hashes, and stage-specific measurements |
-| `transcript.jsonl` | Fixed-slot ledger records and local offline correctness labels |
-| `candidates.jsonl` | Prompt/scoring token IDs, decoder seeds, candidate records, and selected index |
-| `releases/` | Completed visual refinement arrays |
-| `replay.npz` | Trusted controller observations and transitions from behavior collection |
-| `modules.json`, `training.jsonl` | Instantiated controller counts and optimization records |
-| `checkpoint.pt` | Controller, optimizer, target, sampler, and random-state data for resuming |
-
-Outputs depend on the selected stage. Treat replay arrays and private randomizer state as trusted local artifacts. The complete evaluation log contains labels and is not a certified public mechanism transcript.
-
-## 🔬 Scope and Reproducibility
-
-This repository is a **new implementation of the documented mechanism**, not recovered source for historical paper measurements. New experiments require their own checkpoints, run identifiers, parameter counts, timings, and accuracy measurements. Tests and the smoke check validate software behavior; they do not reproduce full-scale benchmark results.
-
-| Capability | Current coverage |
-|---|---|
-| Recorded Grounding collection/evaluation | Implemented; retrieval disabled |
-| Projection and task-adapter fitting | Implemented; Stage 1 uses precomputed native targets |
-| H, CB, and Independent fitting/resume | Implemented from immutable replay |
-| Action parsing and aggregation | Library utilities; no complete Action benchmark CLI |
-| Live desktop interaction | Not implemented |
-| Development checkpoint selection and 10-family × 3-replicate orchestration | Not automated; CLI saves the last controller checkpoint |
-
-Privacy calibration uses sensitivity `0.01` for the stated **feature neighborhood with fixed public inputs**. It does not cover arbitrary screenshot pairs or provide training-record privacy, and the numerical implementation is not a production DP certification. Candidate weights use signed relevance squared; this measures score magnitude rather than exclusively positive semantic alignment.
-
-For experiment reporting, retain the repository commit, model/tokenizer revisions, manifests, projection hashes, configurations, and family/replicate identifiers. Earlier experimental code remains accessible in [Git history](https://github.com/BitAdventurer/blind-but-smart/tree/c13776d184250d55f008afb76658f5a02cbcf120).
-
-## 📄 License
+Privacy calibration uses sensitivity .01 for the stated feature neighborhood with fixed public inputs. It does not cover arbitrary screenshot pairs or training-record privacy. Research floating-point randomizers are not production DP certification. Signed relevance is squared for Grounding weights, so weighting measures magnitude rather than exclusively positive alignment.
 
 Released under the [MIT License](LICENSE).
