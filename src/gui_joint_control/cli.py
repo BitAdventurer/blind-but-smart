@@ -37,38 +37,114 @@ def new_output(path):
 
 
 def candidate_seed(seed, trajectory_id, slot, candidate_index):
-    """Public decoding stream keyed independently of earlier candidate counts."""
-    key=json.dumps(['decoder-v1',int(seed),str(trajectory_id),int(slot),int(candidate_index)],
-        ensure_ascii=False,separators=(',',':')).encode('utf-8')
-    return int.from_bytes(hashlib.sha256(key).digest()[:8],'big') % (2**63-1)
+    from .evaluation import decoder_seed
+    return decoder_seed(seed, trajectory_id, slot, candidate_index)
 
 
 def fit(args):
     from .replay import ReplayBuffer
     from .trainer import Trainer
     from .controller import describe_controllers
-    config=load_config(args.config)
-    buffer=ReplayBuffer.from_npz(args.replay)
-    trainer=Trainer(config,args.method,buffer,seed=args.seed,device=args.device)
-    if args.resume:trainer.load_checkpoint(args.resume)
-    output=new_output(args.output)
-    write_json(output/'config.json',config)
-    write_json(output/'modules.json',describe_controllers(trainer.bundles))
-    start=time.perf_counter()
-    with (output/'training.jsonl').open('w',encoding='utf-8') as stream:
+    from .selection import CheckpointManager
+    from .evaluation import RecordedEvaluator, file_hash, assert_disjoint_manifests, validate_tms_population
+    from .tms import TMSSchedule
+    config = load_config(args.config)
+    buffer = ReplayBuffer.from_npz(args.replay)
+    software_only = getattr(args, 'software_only', False)
+    if not software_only and args.batch_size != 256:
+        raise ValueError('Manuscript fitting uses batch size 256; smaller batches are software fixtures only')
+    task, family = getattr(args, 'task', 'G'), getattr(args, 'family_id', 'software-fixture')
+    schedule = TMSSchedule.from_json(args.tms_schedule) if getattr(args, 'tms_schedule', None) else None
+    dev_schedule = TMSSchedule.from_json(args.dev_tms_schedule) if getattr(args, 'dev_tms_schedule', None) else None
+    if not software_only:
+        for field, expected in (('task', task), ('family_id', family)):
+            values = buffer.metadata.get(field)
+            if values is None or values.shape != (len(buffer),) or not np.all(values == expected):
+                raise ValueError(f'Replay {field} must bind the explicit fitting task/family')
+        source = buffer.metadata.get('source_manifest_sha256')
+        if source is None or source.shape != (len(buffer),) or len(set(source.tolist())) != 1:
+            raise ValueError('Replay must bind one immutable source manifest SHA256')
+        if schedule and schedule.population_manifest_sha256 != source[0]:
+            raise ValueError('Training TMS population and replay source manifest differ')
+    trainer = Trainer(config, args.method, buffer, seed=args.seed, device=args.device,
+                      tms_schedule=schedule, task=task, family=family)
+    manager = evaluator = None
+    if not software_only:
+        if not args.dev_manifest:
+            raise ValueError('Manuscript fitting requires --dev-manifest; --software-only is only for software fixtures')
+        assert_disjoint_manifests(buffer, args.dev_manifest, task=task)
+        if args.method in ('Disclosure-only', 'Count-only') and dev_schedule is None:
+            raise ValueError('Single-head fitting requires --dev-tms-schedule before optimization')
+        if dev_schedule is not None:
+            validate_tms_population(dev_schedule, args.dev_manifest, task=task, family=family)
+        evaluator = RecordedEvaluator(args)
+    if args.resume:
+        if software_only:
+            raise ValueError('Use a new output for software fixtures')
+        if Path(args.resume).resolve() != (Path(args.output)/'last.pt').resolve():
+            raise ValueError('Resume requires the same output directory and its last.pt selection state')
+        output = Path(args.output)
+        trainer.load_checkpoint(args.resume)
+    else:
+        output = new_output(args.output)
+    write_json(output/'config.json', config)
+    write_json(output/'modules.json', describe_controllers(trainer.bundles))
+    if evaluator:
+        binding = {'dev_manifest_sha256': file_hash(args.dev_manifest), 'task': task, 'family_id': family,
+                   'method': args.method, 'replay_content_sha256': buffer.content_sha256,
+                   'config_sha256': trainer.config_sha256, 'seed': args.seed,
+                   'dev_replicates': args.dev_replicates, 'executor': evaluator.provenance,
+                   'dev_tms_schedule_sha256': dev_schedule.content_sha256 if dev_schedule else None}
+        manager = CheckpointManager(output, binding=binding, interval=10000, resume=bool(args.resume))
+        if args.resume:
+            manager.validate_resume(trainer)
+    last_development = {}
+    def evaluate(current):
+        episodes = []
+        for replicate in range(1, args.dev_replicates + 1):
+            _, traces = evaluator.run(args.dev_manifest, trainer=current,
+                replicate='development-' + str(replicate), tms_schedule=dev_schedule)
+            episodes.extend(traces)
+        last_development['episodes'] = episodes
+        return {'split':'development', 'manifest_sha256':file_hash(args.dev_manifest), 'episodes':episodes}
+    start = time.perf_counter()
+    with (output/'training.jsonl').open('a' if args.resume else 'w', encoding='utf-8') as stream:
         for _ in range(args.updates):
-            metrics=trainer.step(batch_size=args.batch_size)
-            stream.write(json.dumps(metrics,allow_nan=False)+'\n')
+            metrics = trainer.step(batch_size=args.batch_size)
+            stream.write(json.dumps(metrics, allow_nan=False)+'\n')
             stream.flush()
-    trainer.save_checkpoint(output/'checkpoint.pt')
-    report={'run_id':args.run_id or str(uuid.uuid4()),'kind':'new_offline_controller_fit','method':args.method,
-        'updates_this_invocation':args.updates,'component_updates':trainer.component_updates,
-        'replay':buffer.describe(),'runtime':versions(),'wall_seconds':time.perf_counter()-start,
-        'config_sha256':hashlib.sha256((output/'config.json').read_bytes()).hexdigest(),
-        'checkpoint_selection':'last update; no held-out closed-loop development evaluation performed',
-        'benchmark_accuracy_computed':False,'reproduces_historical_results':False}
-    write_json(output/'run.json',report)
-    print(json.dumps(report,indent=2))
+            if manager:
+                selection = manager.consider(trainer, evaluate)
+                if selection and selection['selected']:
+                    trace = output/'selected-development.jsonl'
+                    with trace.open('w', encoding='utf-8') as records:
+                        for episode in last_development['episodes']:
+                            for row in episode['records']:
+                                records.write(json.dumps({'trajectory_id':episode['trajectory_id'],
+                                    'replicate_id':episode['replicate'], **row}, allow_nan=False)+'\n')
+                    write_json(output/'selected-development-run.json', {
+                        'kind':'new_recorded_controller_evaluation', 'split':'development',
+                        'controller_method':args.method, 'task':task, 'family_id':family,
+                        'controller_checkpoint_sha256':file_hash(manager.selected_path),
+                        'manifest_sha256':file_hash(args.dev_manifest), 'transcript_sha256':file_hash(trace),
+                        'selected_iteration':trainer.iteration, 'replicates':args.dev_replicates,
+                        'score':selection['score'], 'reproduces_historical_results':False})
+    if manager:
+        manager.save_last(trainer)
+    else:
+        trainer.save_checkpoint(output/'checkpoint.pt')
+    report = {'run_id':args.run_id or str(uuid.uuid4()), 'kind':'software_fixture_fit' if software_only else 'new_offline_controller_fit',
+        'method':args.method, 'family_id':family, 'task':task,
+        'updates_this_invocation':args.updates, 'component_updates':trainer.component_updates,
+        'replay':buffer.describe(), 'runtime':versions(), 'wall_seconds':time.perf_counter()-start,
+        'config_sha256':file_hash(output/'config.json'),
+        'checkpoint_selection':manager.state['criterion'] if manager else 'software fixture last update only',
+        'selected_checkpoint':str(manager.selected_path) if manager and manager.best else None,
+        'selected_iteration':manager.best['iteration'] if manager and manager.best else None,
+        'development_evaluations':len(manager.state['evaluations']) if manager else 0,
+        'benchmark_accuracy_computed':False, 'reproduces_historical_results':False}
+    write_json(output/'run.json', report)
+    print(json.dumps(report, indent=2))
 
 
 def smoke(args):
@@ -87,10 +163,9 @@ def smoke(args):
     assert len(records)==56
     save_replay(transitions,output/'software_fixture_replay.npz')
     config=load_config(args.config)
-    config['reference_controller']['hidden_sizes']=[16,16]
     write_json(output/'software_fixture_config.json',config)
     nested=argparse.Namespace(config=output/'software_fixture_config.json',replay=output/'software_fixture_replay.npz',method='H',
-        seed=123,device='cpu',resume=None,output=output/'fit',updates=args.updates,batch_size=8,run_id='software-smoke-'+str(uuid.uuid4()))
+        seed=123,device='cpu',resume=None,output=output/'fit',updates=args.updates,batch_size=8,software_only=True,run_id='software-smoke-'+str(uuid.uuid4()))
     fit(nested)
     report={'kind':'synthetic_software_test_only','published_experimental_evidence':False,
         'transcript_slots':len(records),'eligible_slots':8,'invocations':sum(r['invoked'] for r in records),
@@ -100,21 +175,9 @@ def smoke(args):
     print(json.dumps(report,indent=2))
 
 
-def manifest_rows(path):
-    groups={}
-    for line_number,line in enumerate(Path(path).read_text(encoding='utf-8').splitlines(),1):
-        if not line.strip():continue
-        row=json.loads(line)
-        trajectory=str(row['trajectory_id']);slot=row['slot']
-        if isinstance(slot,bool) or not isinstance(slot,int) or not 0<=slot<56:
-            raise ValueError(f'Manifest line {line_number}: slot must be integer 0..55')
-        if row.get('task','G')!='G':
-            raise ValueError('This collection command supports Grounding; Action needs its separately pinned evaluator/schema')
-        group=groups.setdefault(trajectory,{})
-        if slot in group:raise ValueError('Duplicate trajectory/slot key')
-        group[slot]=row
-    if not groups:raise ValueError('Empty manifest')
-    return groups
+def manifest_rows(path, task='G'):
+    from .evaluation import manifest_rows as read_manifest
+    return read_manifest(path, task)
 
 
 def fit_projection(args):
@@ -163,117 +226,182 @@ def fit_adapter(args):
 
 
 def collect(args):
-    from .features import DinoRegionalEncoder
-    from .executor import ReleasedQwenExecutor
-    from .runtime import Slot,Prediction,behavior_allocator,inference_allocator,run_trajectory,save_replay
-    from .privacy import PrivacyLedger
-    from .prompt_policy import prepare_prompt
-    groups=manifest_rows(args.manifest)
-    trained_allocator=None
+    from .trainer import Trainer
+    from .replay import ReplayBuffer
+    from .tms import TMSSchedule
+    from .evaluation import RecordedEvaluator, file_hash
+    from .runtime import TrajectoryExecutionError
+    trainer = None
+    training_schedule = TMSSchedule.from_json(args.tms_schedule) if args.tms_schedule else None
+    evaluation_schedule = TMSSchedule.from_json(args.evaluation_tms_schedule) if args.evaluation_tms_schedule else None
+    if args.controller_checkpoint and args.controller_method in ('Disclosure-only','Count-only') and evaluation_schedule is None:
+        raise ValueError('Single-head evaluation requires --evaluation-tms-schedule before any release')
     if args.controller_checkpoint:
         if not args.training_replay or not args.controller_config:
-            raise ValueError('Controller evaluation requires --training-replay and --controller-config for checkpoint binding')
-        from .trainer import Trainer
-        from .replay import ReplayBuffer
-        trainer=Trainer(load_config(args.controller_config),args.controller_method,
-            ReplayBuffer.from_npz(args.training_replay),device=args.device)
+            raise ValueError('Controller evaluation requires --training-replay and --controller-config')
+        trainer = Trainer(load_config(args.controller_config), args.controller_method,
+            ReplayBuffer.from_npz(args.training_replay), device=args.device, tms_schedule=training_schedule,
+            task=args.task, family=args.family_id)
         trainer.load_checkpoint(args.controller_checkpoint)
-        trained_allocator=inference_allocator(trainer)
-    base=Path(args.manifest).resolve().parent
-    projection=np.load(args.projection,allow_pickle=False)
-    model=ReleasedQwenExecutor.from_pretrained(args.model,revision=args.revision,tokenizer_id=args.tokenizer or args.model,
-        tokenizer_revision=args.tokenizer_revision or args.revision,projection=projection,device=args.device,
-        dtype=args.dtype,local_files_only=not args.allow_download)
-    # Cached feature files are permitted on the trusted client. No clean
-    # feature/target object is passed into ReleasedQwenExecutor.
-    encoder=None
-    if any('image_path' in row and 'features_path' not in row for group in groups.values() for row in group.values()):
-        if not args.public_projection or not args.dino_model:
-            raise ValueError('Image manifests require --dino-model and --public-projection')
-        encoder=DinoRegionalEncoder.from_pretrained(args.dino_model,args.dino_revision,args.public_projection,args.device)
-    output=new_output(args.output)
-    all_transitions=[];total_correct=0;eligible=0;invoked=0
-    behavior_seed=np.random.SeedSequence(args.seed).spawn(1)[0]
-    behavior_rng=np.random.default_rng(behavior_seed)
-    (output/'releases').mkdir()
-    format_wrapper='Return only a JSON object with normalized coordinates: {"x": number, "y": number}.\nInstruction: '
-    with (output/'transcript.jsonl').open('w',encoding='utf-8') as stream:
-        for trajectory,group in sorted(groups.items()):
-            active_slot={}
-            slots=[]
-            for t in range(max(group)+1):
-                row=group.get(t)
-                slots.append(Slot('',None,False,False) if row is None else Slot(row.get('instruction',''),
-                    tuple(row['target_box']) if row.get('target_box') is not None else None,
-                    row.get('eligible',True),True))
-            def load_features(t):
-                active_slot['index']=t
-                row=group[t]
-                if 'features_path' in row:
-                    return np.load(base/row['features_path'],allow_pickle=False)
-                return encoder(base/row['image_path'])
-            def execute(release,text,k):
-                prepared=prepare_prompt('G',text,[],[],lambda payload:model.prompt_token_ids(format_wrapper+payload.current).reshape(-1).tolist())
-                slot_index=active_slot['index']
-                seeds=[candidate_seed(args.seed,trajectory,slot_index,i) for i in range(k)]
-                result,candidates=model.predict_grounding(release,prompt_text=format_wrapper+prepared.payload.current,scoring_text=prepared.payload.scoring_text,seeds=seeds)
-                release_name=hashlib.sha256(f'{trajectory}:{slot_index}'.encode()).hexdigest()+'.npy'
-                np.save(output/'releases'/release_name,release,allow_pickle=False)
-                with (output/'candidates.jsonl').open('a',encoding='utf-8') as candidate_stream:
-                    candidate_stream.write(json.dumps({'trajectory_id':trajectory,'slot':slot_index,
-                        'release_file':'releases/'+release_name,'public_decoder_seeds':seeds,
-                        'input_ids':prepared.input_ids,'scoring_text':prepared.payload.scoring_text,
-                        'scoring_token_ids':model.tokenizer.encode(prepared.payload.scoring_text,add_special_tokens=False),
-                        'selected_index':result.selected_index,'candidates':[asdict(candidate) for candidate in candidates]},allow_nan=False)+'\n')
-                return Prediction(result.coordinate,result.feedback)
-            records,transitions=run_trajectory(slots,load_features,trained_allocator or behavior_allocator(behavior_rng),execute)
-            for record in records:
-                stream.write(json.dumps({'trajectory_id':trajectory,**record},allow_nan=False)+'\n')
-            all_transitions.extend(transitions)
-            eligible+=sum(r['eligible'] for r in records);invoked+=sum(r['invoked'] for r in records);total_correct+=sum(r['correct'] for r in records)
-    if not trained_allocator:save_replay(all_transitions,output/'replay.npz')
-    report={'kind':'new_grounding_controller_evaluation' if trained_allocator else 'new_grounding_behavior_collection','run_id':str(uuid.uuid4()),'eligible':eligible,'invoked':invoked,
-        'correct':total_correct,'accuracy':total_correct/eligible if eligible else None,'runtime':versions(),
-        'manifest_sha256':hashlib.sha256(Path(args.manifest).read_bytes()).hexdigest(),
-        'projection_sha256':hashlib.sha256(Path(args.projection).read_bytes()).hexdigest(),
-        'executor':model.provenance,'public_seed':args.seed,'decoder_seed_scheme':'sha256-v1: seed/trajectory/slot/candidate',
-        'model_dtype':args.dtype,'reproduces_historical_results':False}
-    write_json(output/'run.json',report)
-    print(json.dumps(report,indent=2))
+    evaluator = RecordedEvaluator(args)
+    output = new_output(args.output)
+    try:
+        report, _ = evaluator.run(args.manifest, trainer=trainer, replicate=args.replicate_id,
+                                 output=output, tms_schedule=evaluation_schedule)
+    except TrajectoryExecutionError as error:
+        write_json(output/'aborted.json', {'status':'aborted_after_release', 'error':str(error),
+            'used_budget':error.used_budget, 'partial_records':error.records,
+            'benchmark_accuracy_computed':False})
+        raise
+    report.update(kind='new_recorded_controller_evaluation' if trainer or evaluation_schedule else 'new_behavior_collection',
+                  run_id=str(uuid.uuid4()), runtime=versions(),
+                  split=args.split or ('evaluation' if trainer or evaluation_schedule else 'fit-train'),
+                  controller_method=args.controller_method if trainer else ('TMS' if evaluation_schedule else 'behavior'),
+                  controller_checkpoint_sha256=file_hash(args.controller_checkpoint) if trainer else None,
+                  controller_config_sha256=file_hash(args.controller_config) if trainer else None,
+                  training_replay_sha256=file_hash(args.training_replay) if trainer else None,
+                  tms_schedule_sha256=training_schedule.content_sha256 if training_schedule else None,
+                  evaluation_tms_schedule_sha256=evaluation_schedule.content_sha256 if evaluation_schedule else None,
+                  transcript_sha256=file_hash(output/'transcript.jsonl'))
+    write_json(output/'run.json', report)
+    print(json.dumps(report, indent=2))
+
+
+METHODS = ['H','CB','Independent','Independent-1M','Disclosure-only','Count-only']
+
+
+def add_executor_arguments(parser):
+    for name in ('model','projection','revision','tokenizer','tokenizer-revision','dino-model','dino-revision',
+                 'public-projection','action-schema','action-evaluator','retrieval-bank','retrieval-keys','retrieval-exclusion-manifest'):
+        parser.add_argument('--'+name)
+    parser.add_argument('--dtype', choices=['float32','bfloat16'], default='float32')
+    parser.add_argument('--retrieval-threshold', type=float)
+    parser.add_argument('--retrieval-view', choices=['primary','strict'], default='primary')
+    parser.add_argument('--disable-retrieval', action='store_true', help='Explicit retrieval-disabled ablation')
+    parser.add_argument('--allow-download', action='store_true')
+
+
+def protocol_command(args):
+    from .protocol import build_plan, execute_plan
+    registry = json.loads(Path(args.registry).read_text(encoding='utf-8'))
+    plan = build_plan(registry, args.output_root)
+    if args.plan_output:
+        write_json(args.plan_output, plan)
+    if args.execute:
+        execute_plan(plan)
+    else:
+        print(json.dumps(plan, indent=2))
+
+
+def build_tms(args):
+    from .tms import build_tms_schedule
+    from .evaluation import file_hash, slot_identifier
+    groups = manifest_rows(args.manifest, args.task)
+    provenance = json.loads(Path(args.development_run).read_text(encoding='utf-8'))
+    expected = {'kind':'new_recorded_controller_evaluation', 'split':'development', 'controller_method':'H',
+                'task':args.task, 'family_id':args.family_id,
+                'manifest_sha256':file_hash(args.development_manifest),
+                'controller_checkpoint_sha256':file_hash(args.selected_h_checkpoint),
+                'transcript_sha256':file_hash(args.development_transcript)}
+    if any(provenance.get(key) != value for key, value in expected.items()):
+        raise ValueError('TMS requires the selected H development transcript with matching task/family/artifact provenance')
+    selection_path = Path(args.selection_state) if args.selection_state else Path(args.selected_h_checkpoint).parent/'selection.json'
+    selection = json.loads(selection_path.read_text(encoding='utf-8'))
+    best, binding = selection.get('best') or {}, selection.get('binding') or {}
+    if (best.get('method') != 'H' or best.get('checkpoint_sha256') != expected['controller_checkpoint_sha256']
+            or type(best.get('iteration')) is not int or best['iteration'] <= 0
+            or provenance.get('selected_iteration') != best['iteration']
+            or binding.get('dev_manifest_sha256') != expected['manifest_sha256']
+            or binding.get('task') != args.task or binding.get('family_id') != args.family_id):
+        raise ValueError('TMS checkpoint must match the persisted development-selected H, not an unselected last state')
+    rows = [json.loads(line) for line in Path(args.development_transcript).read_text(encoding='utf-8').splitlines() if line.strip()]
+    development_groups = manifest_rows(args.development_manifest, args.task)
+    by_replicate = {}
+    for row in rows:
+        replicate = str(row.get('replicate_id', provenance.get('replicate_id', '1')))
+        population = by_replicate.setdefault(replicate, {})
+        key = (row['trajectory_id'], row['slot'])
+        if key in population:
+            raise ValueError('Duplicate development transcript row')
+        population[key] = row
+    expected_grid = {(trajectory, slot):(group[slot].get('eligible', True) if slot in group else False)
+                     for trajectory, group in development_groups.items() for slot in range(56)}
+    if not by_replicate or any(set(population) != set(expected_grid) or any(
+            population[key].get('eligible') != eligible for key, eligible in expected_grid.items())
+            for population in by_replicate.values()):
+        raise ValueError('TMS development traces must preserve the complete manifest and fixed-slot eligibility grid')
+    from .selection import score_development
+    score_development([{'trajectory_id':trajectory, 'replicate':replicate,
+                        'records':[population[(trajectory, slot)] for slot in range(56)]}
+                       for replicate, population in by_replicate.items() for trajectory in development_groups])
+    invoked = [row for row in rows if row.get('eligible') and row.get('invoked')]
+    if not invoked:
+        raise ValueError('TMS requires nonempty invoked H development traces')
+    budgets = [float(value) for row in invoked for value in row['executed_budgets']]
+    counts = [row['candidate_count'] for row in invoked]
+    schedule = build_tms_schedule(task=args.task, family=args.family_id, population=args.population,
+        population_manifest_sha256=file_hash(args.manifest), public_hash_seed=args.public_hash_seed,
+        slots=[{'slot_id':slot_identifier(t,s),'original_step':s+1} for t, group in groups.items()
+               for s,row in group.items() if row.get('eligible',True)],
+        mean_regional_budget=float(np.mean(budgets, dtype=np.float64)), mean_candidate_count=float(np.mean(counts)),
+        selected_h_checkpoint_sha256=file_hash(args.selected_h_checkpoint),
+        development_manifest_sha256=file_hash(args.development_manifest))
+    if Path(args.output).exists():
+        raise FileExistsError(args.output)
+    write_json(args.output, schedule.to_dict())
 
 
 def main(argv=None):
-    parser=argparse.ArgumentParser(description=__doc__)
-    commands=parser.add_subparsers(dest='command',required=True)
-    config_default=str(Path(__file__).resolve().parents[2]/'configs/naacl_reference.json')
-    train=commands.add_parser('train',help='Fit real controller parameters from a validated immutable replay')
-    train.add_argument('--config',default=config_default);train.add_argument('--replay',required=True)
-    train.add_argument('--method',choices=['H','CB','Independent','Independent-1M'],default='H')
-    train.add_argument('--updates',type=int,required=True);train.add_argument('--batch-size',type=int,default=256)
-    train.add_argument('--device',default='cpu');train.add_argument('--seed',type=int,default=20260916)
-    train.add_argument('--resume');train.add_argument('--run-id');train.add_argument('--output',required=True)
-    train.set_defaults(func=fit)
-    check=commands.add_parser('smoke',help='Run synthetic software checks, not a benchmark experiment')
-    check.add_argument('--config',default=config_default);check.add_argument('--output',required=True)
-    check.add_argument('--updates',type=int,default=3);check.set_defaults(func=smoke)
-    collection=commands.add_parser('collect-grounding',help='Execute real released-latent VLM behavior collection')
-    for field in ('manifest','model','projection','output'):collection.add_argument('--'+field,required=True)
-    for field in ('revision','tokenizer','tokenizer-revision','dino-model','dino-revision','public-projection'):collection.add_argument('--'+field)
-    collection.add_argument('--device',default='cpu');collection.add_argument('--seed',type=int,default=20260916)
-    collection.add_argument('--dtype',choices=['float32','bfloat16'],default='float32')
-    collection.add_argument('--controller-checkpoint');collection.add_argument('--controller-config');collection.add_argument('--training-replay')
-    collection.add_argument('--controller-method',choices=['H','CB','Independent','Independent-1M'],default='H')
-    collection.add_argument('--allow-download',action='store_true');collection.set_defaults(func=collect)
-    align=commands.add_parser('fit-projection',help='Train Stage1 against saved native visual tokens')
-    align.add_argument('--records',required=True);align.add_argument('--output',required=True)
-    align.add_argument('--device',default='cpu');align.add_argument('--seed',type=int,default=20260916);align.set_defaults(func=fit_projection)
-    adapter=commands.add_parser('fit-adapter',help='Stage2 language q/v LoRA and projection teacher forcing')
-    for field in ('model','projection','records','output'):adapter.add_argument('--'+field,required=True)
-    adapter.add_argument('--revision');adapter.add_argument('--device',default='cpu');adapter.add_argument('--seed',type=int,default=20260916)
-    adapter.add_argument('--dtype',choices=['float32','bfloat16'],default='float32')
-    adapter.add_argument('--allow-download',action='store_true');adapter.add_argument('--save-merged',action='store_true');adapter.set_defaults(func=fit_adapter)
-    args=parser.parse_args(argv)
-    if hasattr(args,'updates') and args.updates<1:parser.error('--updates must be positive')
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest='command', required=True)
+    config_default = str(Path(__file__).resolve().parents[2]/'configs/naacl_reference.json')
+    train = commands.add_parser('train', help='Fit with held-out development checkpoint selection')
+    train.add_argument('--config', default=config_default); train.add_argument('--replay', required=True)
+    train.add_argument('--method', choices=METHODS, default='H')
+    train.add_argument('--updates', type=int, required=True); train.add_argument('--batch-size', type=int, default=256)
+    train.add_argument('--device', default='cpu'); train.add_argument('--seed', type=int, default=20260916)
+    train.add_argument('--resume'); train.add_argument('--run-id'); train.add_argument('--output', required=True)
+    train.add_argument('--dev-manifest'); train.add_argument('--dev-replicates', type=int, default=3)
+    train.add_argument('--task', choices=['G','A'], default='G'); train.add_argument('--family-id', required=True)
+    train.add_argument('--tms-schedule'); train.add_argument('--dev-tms-schedule')
+    train.add_argument('--software-only', action='store_true', help='Synthetic fixture only; no selected model or benchmark claim')
+    add_executor_arguments(train); train.set_defaults(func=fit)
+    check = commands.add_parser('smoke', help='Synthetic CPU checks; not a benchmark experiment')
+    check.add_argument('--config', default=config_default); check.add_argument('--output', required=True)
+    check.add_argument('--updates', type=int, default=3); check.set_defaults(func=smoke)
+    for name, task in [('collect-grounding','G'),('collect-action','A')]:
+        collection = commands.add_parser(name, help='Execute the frozen released-input recorded evaluation')
+        collection.add_argument('--manifest', required=True); collection.add_argument('--output', required=True)
+        collection.add_argument('--task', choices=[task], default=task)
+        collection.add_argument('--device', default='cpu'); collection.add_argument('--seed', type=int, default=20260916)
+        collection.add_argument('--family-id', required=True); collection.add_argument('--replicate-id', default='1')
+        collection.add_argument('--split', choices=['fit-train','development','evaluation','test'])
+        collection.add_argument('--controller-checkpoint'); collection.add_argument('--controller-config')
+        collection.add_argument('--training-replay'); collection.add_argument('--controller-method', choices=METHODS, default='H')
+        collection.add_argument('--tms-schedule'); collection.add_argument('--evaluation-tms-schedule')
+        add_executor_arguments(collection); collection.set_defaults(func=collect)
+    align = commands.add_parser('fit-projection', help='Fit Stage 1 against saved native visual tokens')
+    align.add_argument('--records', required=True); align.add_argument('--output', required=True)
+    align.add_argument('--device', default='cpu'); align.add_argument('--seed', type=int, default=20260916)
+    align.set_defaults(func=fit_projection)
+    adapter = commands.add_parser('fit-adapter', help='Stage 2 language q/v LoRA and projection teacher forcing')
+    for field in ('model','projection','records','output'): adapter.add_argument('--'+field, required=True)
+    adapter.add_argument('--revision'); adapter.add_argument('--device', default='cpu')
+    adapter.add_argument('--seed', type=int, default=20260916); adapter.add_argument('--dtype', choices=['float32','bfloat16'], default='float32')
+    adapter.add_argument('--allow-download', action='store_true'); adapter.add_argument('--save-merged', action='store_true')
+    adapter.set_defaults(func=fit_adapter)
+    tms = commands.add_parser('build-tms', help='Bind H development means to a public target-population schedule')
+    for field in ('manifest','development-transcript','development-run','development-manifest','selected-h-checkpoint','family-id','public-hash-seed','population','output'):
+        tms.add_argument('--'+field, required=True)
+    tms.add_argument('--task', choices=['G','A'], required=True); tms.set_defaults(func=build_tms)
+    tms.add_argument('--selection-state', help='Defaults to selection.json beside the selected H checkpoint')
+    protocol = commands.add_parser('protocol', help='Validate and plan explicit 10-family/3-repeat runs; does not execute by default')
+    protocol.add_argument('--registry', required=True); protocol.add_argument('--output-root', required=True)
+    protocol.add_argument('--plan-output'); protocol.add_argument('--execute', action='store_true')
+    protocol.set_defaults(func=protocol_command)
+    args = parser.parse_args(argv)
+    if hasattr(args, 'updates') and args.updates < 1: parser.error('--updates must be positive')
+    if hasattr(args, 'dev_replicates') and args.dev_replicates < 1: parser.error('--dev-replicates must be positive')
     args.func(args)
 
 

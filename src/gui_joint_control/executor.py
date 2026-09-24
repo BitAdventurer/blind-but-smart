@@ -17,7 +17,8 @@ from typing import Mapping, Sequence
 import numpy as np
 
 from .scoring import (GroundingCandidate, GroundingResult, aggregate_grounding,
-                      parse_grounding, score_relevance)
+                      ActionCandidate, ActionFunctionSchema, aggregate_action,
+                      parse_action, parse_grounding, score_relevance)
 
 
 SUPPORTED_TRANSFORMERS = "4.57.6"
@@ -305,3 +306,30 @@ class ReleasedQwenExecutor:
             candidates.append(GroundingCandidate(candidate.index, coordinate, coordinate is not None,
                                                  candidate.logprob_mean, relevance, candidate.text, candidate.token_ids))
         return aggregate_grounding(candidates, rule), tuple(candidates)
+
+    def predict_action(self, release, *, prompt_text: str, scoring_text: str,
+                       seeds: Sequence[int], schemas: Mapping[str, ActionFunctionSchema]):
+        """Generate and aggregate Action candidates from the same completed release.
+
+        The externally pinned schema/alias map contains no evaluation targets.
+        Each spatial key contributes separately to relevance, including drag
+        endpoints in the same cell. Reference actions are never accepted here.
+        """
+        if not schemas:
+            raise ValueError("Action execution requires an explicit frozen schema")
+        input_ids = self.prompt_token_ids(prompt_text)
+        embeddings = self.instruction_embeddings(scoring_text)
+        generated = self.generate_tokens(release, input_ids, seeds=seeds, max_new_tokens=128)
+        candidates = []
+        for candidate in generated:
+            action = parse_action(candidate.text, schemas, terminated=candidate.terminated)
+            if action is None:
+                function, arguments, status, relevance = "INVALID", {}, "INVALID", 0.0
+            else:
+                function, arguments, status = action["function"], action["arguments"], action["status"]
+                spatial = [arguments[key] for key in sorted(schemas[function].spatial) if key in arguments]
+                relevance = score_relevance(release, self.projection, embeddings, spatial)
+            candidates.append(ActionCandidate(candidate.index, function, arguments, status, action is not None,
+                                              candidate.logprob_mean, relevance, candidate.text, candidate.token_ids))
+        output, feedback = aggregate_action(candidates, schemas)
+        return output, feedback, tuple(candidates)

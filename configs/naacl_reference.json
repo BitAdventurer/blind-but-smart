@@ -1,21 +1,31 @@
 {
-  "schema_version": 1,
-  "profile": "new_reference_2026_09_16",
-  "purpose": "New reimplementation specification, not a reconstruction of the reported runs",
+  "schema_version": 2,
+  "profile": "current_manuscript_2026_09_24",
+  "purpose": "Current author-specified manuscript implementation; not recovered historical checkpoints or independently reproduced results",
   "reproduces_reported_results": false,
   "source_policy": {
-    "retained_contract": "docs/NAACL_RUNTIME.md: representation, budget/filter interface, dimensions, reward, declared learning rates, discounts, replay mixture and decoding",
-    "new_design_choices": [
-      "controller architecture and initialization",
-      "controller optimizer details",
-      "per-optimizer update frequency",
-      "Gumbel temperature schedule",
-      "prompt cap scope and overflow",
-      "history provenance",
-      "public initialization seed",
-      "independent fixed complementary action 3.0 budget and 5 candidates"
+    "retained_contract": "Current manuscript Appendix B.7, reference/controller_config.json: architecture, AdamW, initialization, update order, parameter counts and Gumbel index",
+    "confirmed_historical_settings": [
+      "controller AdamW",
+      "learning rate 3e-4",
+      "betas 0.9/0.999",
+      "epsilon 1e-8",
+      "weight decay 0.0"
     ],
-    "result_policy": "All results from this profile require a new run ID and fresh evaluation; do not attach old accuracy, parameter counts or GPU hours."
+    "author_specified_settings": [
+      "H/CB/standalone width 256; Independent width 170",
+      "hidden Kaiming-uniform ReLU; output Xavier-uniform; zero biases",
+      "critic then actor then Polyak",
+      "zero-based Gumbel schedule"
+    ],
+    "prospective_reimplementation_choices": [
+      "constant controller learning rate",
+      "float32 controller, float64 log density",
+      "log standard deviation clamp [-5,2]",
+      "prompt cap scope, overflow and history provenance",
+      "public stream bindings and artifact schema"
+    ],
+    "result_policy": "Parameter totals are structure-derived. Accuracy and timing require new run IDs and fresh evaluation; matching this specification does not recover historical runs."
   },
   "reference_controller": {
     "observation_dim": 28,
@@ -23,19 +33,19 @@
     "count_classes": 20,
     "critic_input_dim": 73,
     "hidden_sizes": [
-      128,
-      128
+      256,
+      256
     ],
     "activation": "relu",
     "encoder": "identity",
-    "initialization": "PyTorch Linear default; record PyTorch version and initialization seed",
+    "initialization": "hidden Kaiming-uniform ReLU; output Xavier-uniform; zero biases",
     "log_std_bounds": [
       -5.0,
       2.0
     ],
     "dtype": "float32",
     "optimizer": {
-      "name": "Adam",
+      "name": "AdamW",
       "lr": 0.0003,
       "betas": [
         0.9,
@@ -56,7 +66,7 @@
       "schedule": "linear_then_constant",
       "start": 1.0,
       "end": 0.1,
-      "first_update": 1,
+      "first_update": 0,
       "last_anneal_update": 500000
     },
     "update_order": [
@@ -71,7 +81,12 @@
       1.5,
       5.0
     ],
-    "evaluation": "tanh(mean) affine mapped to budget range; smallest categorical argmax + 1"
+    "evaluation": "tanh(mean) affine mapped to budget range; smallest categorical argmax + 1",
+    "independent_hidden_sizes": [
+      170,
+      170
+    ],
+    "log_density_dtype": "float64"
   },
   "training": {
     "public_initialization_seed": 20260916,
@@ -101,16 +116,19 @@
       "Independent-1M": [
         1000000,
         1000000
+      ],
+      "Disclosure-only": [
+        1000000
+      ],
+      "Count-only": [
+        1000000
       ]
     },
-    "independent": "Separate disclosure and count networks; no sharing or joint fine-tuning. Same reference width per component; record actual parameter totals, do not assume capacity matching.",
+    "independent": "Separate 170-wide role-specific actors and critics; absent opposite heads; separate TMS counterparts during fitting; combine learned heads only after selection, without joint fine-tuning.",
     "development_interval": 10000,
     "checkpoint_selection": "maximum eligible discounted return, then lower eligible budget, lower eligible candidate count, earlier update",
     "resume": "weights, targets, optimizer states, sampler state, RNG states and iteration counter required; otherwise start a new run",
-    "fixed_complement": {
-      "regional_budget": 3.0,
-      "candidate_count": 5
-    }
+    "tms_binding": "Required development-derived task/family schedule artifact, complete eligible population stable slot IDs, public 256-bit hash seed, development means and source hashes. No fixed 3/5 fallback."
   },
   "prompt": {
     "input_token_limit": 4096,
@@ -152,6 +170,7 @@
     "prompt_renderer_and_action_parser_code_hashes": null,
     "dataset_split_eligible_manifest_and_replay_hashes": null,
     "runtime_versions_gpu_and_precision": null,
-    "family_task_seed_and_component_checkpoint_registry": null
+    "family_task_seed_and_component_checkpoint_registry": null,
+    "task_family_tms_schedule_and_population_hashes": null
   }
 }

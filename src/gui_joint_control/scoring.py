@@ -168,6 +168,9 @@ class ActionFunctionSchema:
     optional: frozenset[str]
     spatial: frozenset[str]
     statuses: frozenset[str]
+    argument_types: Mapping[str, str] | None = None
+    canonical_function: str | None = None
+    status_aliases: Mapping[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -179,6 +182,8 @@ class ActionCandidate:
     valid: bool
     logprob_mean: float
     relevance: float
+    text: str = ""
+    token_ids: tuple[int, ...] = ()
 
 
 def parse_action(text: str, schemas: Mapping[str, ActionFunctionSchema], *, terminated=True):
@@ -189,21 +194,39 @@ def parse_action(text: str, schemas: Mapping[str, ActionFunctionSchema], *, term
         value = strict_json(text)
         if not isinstance(value, dict) or set(value) != {"function", "arguments", "status"}:
             return None
+        if not isinstance(value["function"], str) or not isinstance(value["status"], str):
+            return None
         spec = schemas.get(value["function"])
         args = value["arguments"]
-        if spec is None or not isinstance(args, dict) or value["status"] not in spec.statuses:
+        if spec is None or not isinstance(args, dict):
+            return None
+        value["function"] = spec.canonical_function or value["function"]
+        value["status"] = (spec.status_aliases or {}).get(value["status"], value["status"])
+        if value["status"] not in spec.statuses:
             return None
         if not spec.required <= set(args) or not set(args) <= spec.required | spec.optional:
             return None
         for key in set(args) & spec.spatial:
+            if (not isinstance(args[key], list) or len(args[key]) != 2
+                    or any(isinstance(x, bool) or not isinstance(x, (int, float)) for x in args[key])):
+                return None
             coord = _finite_array(args[key], (2,))
             if (coord < -1e-6).any() or (coord > 1 + 1e-6).any():
                 return None
             args[key] = np.clip(coord, 0.0, 1.0).tolist()
-        # Nonspatial arguments must remain serializable finite JSON values.
-        json.dumps(args, allow_nan=False)
+        types = {"string": lambda x: isinstance(x, str),
+                 "integer": lambda x: isinstance(x, int) and not isinstance(x, bool),
+                 "number": lambda x: isinstance(x, (int, float)) and not isinstance(x, bool),
+                 "boolean": lambda x: isinstance(x, bool),
+                 "array": lambda x: isinstance(x, list), "object": lambda x: isinstance(x, dict),
+                 "null": lambda x: x is None}
+        for key, kind in (spec.argument_types or {}).items():
+            if kind not in types or (key in args and not types[kind](args[key])):
+                return None
+        # No semantic repair or Unicode normalization of candidate arguments.
+        json.dumps(args, ensure_ascii=False, allow_nan=False).encode("utf-8", errors="strict")
         return value
-    except (ValueError, TypeError, KeyError, OverflowError):
+    except (ValueError, TypeError, KeyError, OverflowError, UnicodeError):
         return None
 
 

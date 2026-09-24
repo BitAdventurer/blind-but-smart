@@ -106,6 +106,18 @@ class ReplayBuffer:
             values[field] = _immutable(converted)
         self.arrays = MappingProxyType(values)
         self.metadata = MappingProxyType({key: _immutable(value) for key, value in raw.items() if key not in FIELDS})
+        if ('slot_id' in self.metadata) != ('next_slot_id' in self.metadata):
+            raise ValueError('Replay slot_id and next_slot_id must be supplied together')
+        for key in ('slot_id', 'next_slot_id'):
+            if key in self.metadata:
+                ids = self.metadata[key]
+                if ids.shape != (count,) or ids.dtype.kind != 'U':
+                    raise ValueError(f'{key} must be a Unicode string array with one public ID per transition')
+                required = np.ones(count, dtype=bool) if key == 'slot_id' else ~values['terminal']
+                if np.any(ids[required] == ''):
+                    raise ValueError(f'{key} is missing an invocable public slot ID')
+        if 'next_slot_id' in self.metadata and np.any(self.metadata['next_slot_id'][values['terminal']] != ''):
+            raise ValueError('Terminal next_slot_id must be empty')
         self.success_indices = _immutable(np.flatnonzero(values["success"]))
         self.failure_indices = _immutable(np.flatnonzero(~values["success"]))
         self.source_sha256 = source_sha256
@@ -138,7 +150,9 @@ class ReplayBuffer:
 
     def sample(self, batch_size: int, rng: np.random.Generator) -> dict[str, np.ndarray]:
         indices = self.sample_indices(batch_size, rng)
-        return {**{field: values[indices].copy() for field, values in self.arrays.items()}, "indices": indices}
+        return {**{field: values[indices].copy() for field, values in self.arrays.items()},
+                **{field: self.metadata[field][indices].copy() for field in ('slot_id', 'next_slot_id') if field in self.metadata},
+                "indices": indices}
 
     def describe(self) -> dict:
         return {
