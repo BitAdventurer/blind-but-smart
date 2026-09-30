@@ -272,7 +272,9 @@ def collect(args):
                                  output=output, tms_schedule=evaluation_schedule, split=binding['split'])
     except TrajectoryExecutionError as error:
         write_json(output/'aborted.json', {**binding, **error.evaluation_context,
-            'status':'aborted_after_release', 'error':str(error), 'partial_records':error.records,
+            'status':'aborted_after_release' if any(row['invoked'] for row in error.records) else 'aborted_before_release',
+            'scope':'trusted local only; not protected public mechanism output',
+            'error':f'{error.failure_stage} failed ({error.error_type})', 'partial_records':error.records,
             'transcript_sha256':file_hash(output/'transcript.jsonl'),
             'benchmark_accuracy_computed':False, 'reproduces_historical_results':False})
         raise

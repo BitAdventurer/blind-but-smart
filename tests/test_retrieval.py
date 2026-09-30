@@ -41,6 +41,7 @@ def test_release_query_gate_top_eight_order_and_zero_mean(tmp_path):
     assert len(entries) == 8
     assert [json.loads(e.text)["instruction"] for e in entries] == [f"click {i}" for i in range(8)]
     assert all(e.score == 1. for e in entries)
+    assert [e.source_id for e in entries] == [(f"t{i:03}", 1, "G") for i in range(8)]
     assert not bank.retrieve(np.zeros((25, 256)), 2., 0.)
     with pytest.raises(ValueError, match="Threshold"):
         bank.retrieve(release, .5, .3)
@@ -50,6 +51,21 @@ def test_release_query_gate_top_eight_order_and_zero_mean(tmp_path):
         bank._keys.setflags(write=True)
     encoded = serialize_demonstrations(entries)
     assert len(json.loads(encoded)) == 8 and "trajectory_success" not in encoded and "public_metadata" not in encoded
+    assert "source_id" not in encoded and "trajectory_id" not in encoded and "original_slot" not in encoded
+
+
+def test_duplicate_demonstrations_retain_source_identity_without_changing_serialization(tmp_path):
+    from gui_joint_control.prompt_policy import Retrieval
+    manifest_path, key_path, manifest = artifacts(tmp_path, count=2)
+    manifest["entries"][1]["value"] = manifest["entries"][0]["value"]
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    bank = FrozenDemonstrationBank.from_files(manifest_path, key_path, task="G")
+    release = np.zeros((25, 256)); release[:, 0] = 1
+    entries = bank.retrieve(release, .5, .25)
+    assert entries[0].text == entries[1].text
+    assert [entry.source_id for entry in entries] == [("t000", 1, "G"), ("t001", 1, "G")]
+    untraced = [Retrieval(entry.text, entry.score) for entry in entries]
+    assert serialize_demonstrations(entries) == serialize_demonstrations(untraced)
 
 
 def test_global_exact_and_strict_views_are_frozen_before_query(tmp_path):

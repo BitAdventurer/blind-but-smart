@@ -105,3 +105,21 @@ def test_failure_reports_already_spent_release_and_aborts_run():
     assert failure.value.used_budget == 37.5
     assert failure.value.records[-1]["status"] == "EXECUTION_ERROR"
     assert failure.value.records[-1]["invoked"]
+    assert failure.value.failed_slot == 0 and failure.value.failed_slot_invoked
+    assert failure.value.failure_stage == 'execution'
+
+
+def test_action_input_failure_retains_prior_release_without_failed_slot_invocation():
+    slots = [ActionSlot("request", {"function": "x"}) for _ in range(2)]
+    def load(index):
+        if index == 1:
+            raise OSError('synthetic input failure')
+        return np.zeros((25, 256))
+    with pytest.raises(TrajectoryExecutionError) as failure:
+        run_action_trajectory(slots, load, lambda state: (np.full(25, 3.), 1),
+            lambda *args: ActionPrediction({"function": "INVALID", "arguments": {}, "status": "INVALID"}, 2.),
+            evaluator=lambda *args: pytest.fail('Invalid actions bypass scorer'))
+    assert failure.value.used_budget == 75.
+    assert failure.value.failed_slot == 1 and not failure.value.failed_slot_invoked
+    assert failure.value.failure_stage == 'feature_input'
+    assert len(failure.value.records) == 1 and failure.value.records[0]['invoked']

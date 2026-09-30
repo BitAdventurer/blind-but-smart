@@ -380,6 +380,11 @@ class RecordedEvaluator:
                         'retrieval_count': len(prepared.payload.retrieval),
                         'input_token_count': len(prepared.input_ids),
                         'history_count': len(prepared.payload.history),
+                        'retained_history_positions': list(prepared.retained_history_positions),
+                        'retained_retrieval_ids': [
+                            {'trajectory_id': item.source_id[0], 'original_slot': item.source_id[1],
+                             'task': item.source_id[2]} if item.source_id is not None else None
+                            for item in prepared.payload.retrieval],
                         'removed_history': prepared.removed_history, 'removed_retrieval': prepared.removed_retrieval,
                         'candidates': [asdict(c) for c in candidates]}
                     if hasattr(result, 'selected_index'):
@@ -400,7 +405,9 @@ class RecordedEvaluator:
                 error.evaluation_context = {
                     'task': self.task, 'family_id': self.args.family_id, 'replicate_id': str(replicate),
                     'controller_method': method, 'failed_trajectory_id': trajectory,
-                    'failed_slot': active['slot'], 'failed_trajectory_used_budget': error.used_budget,
+                    'failed_slot': error.failed_slot, 'failed_trajectory_used_budget': error.used_budget,
+                    'failure_stage': error.failure_stage, 'failed_slot_invoked': error.failed_slot_invoked,
+                    'error_type': error.error_type,
                     'manifest_sha256': manifest_sha256, 'public_seed': self.args.seed,
                     **self.provenance, **population_binding}
                 persist_trace()

@@ -20,6 +20,18 @@ class PromptTooLong(ValueError):
 class Retrieval:
     text: str
     score: float
+    source_id: tuple[str, int, str] | None = None
+
+    def __post_init__(self):
+        """Optional immutable (trajectory_id, original_slot, task) trace identity."""
+        if self.source_id is not None:
+            source = self.source_id
+            if (not isinstance(source, tuple) or len(source) != 3
+                    or not isinstance(source[0], str) or not source[0]
+                    or type(source[1]) is not int or source[1] < 0
+                    or source[2] not in ("G", "A")):
+                raise ValueError("Retrieval source_id requires trajectory_id, original_slot, and G/A task")
+            source[0].encode("utf-8", errors="strict")
 
 
 @dataclass(frozen=True)
@@ -40,6 +52,8 @@ class PreparedPrompt:
     input_ids: tuple[int, ...]
     removed_history: int
     removed_retrieval: int
+    # Zero-based positions in the original history list of the bound manifest row.
+    retained_history_positions: tuple[int, ...] = ()
 
 
 def prepare_prompt(task: str, current: str, history: Sequence[str],
@@ -63,6 +77,8 @@ lookup is deliberately outside this policy utility.
         raise ValueError("history must contain non-empty original strings")
     if any(not isinstance(x, Retrieval) or not isinstance(x.text, str) or not x.text or not math.isfinite(x.score) for x in retrieval):
         raise ValueError("retrieval entries require text and finite scores")
+    if any(x.source_id is not None and x.source_id[2] != task for x in retrieval):
+        raise ValueError("Retrieval source task must match the current prompt task")
     # No normalization of the original Unicode strings.
     for text in [current, *history, *(x.text for x in retrieval)]:
         text.encode("utf-8", errors="strict")
@@ -76,7 +92,8 @@ lookup is deliberately outside this policy utility.
         if not token_ids or any(isinstance(x, bool) or not isinstance(x, int) or x < 0 for x in token_ids):
             raise ValueError("renderer must return non-empty actual integer token IDs")
         if len(token_ids) <= token_limit:
-            return PreparedPrompt(payload, token_ids, removed_history, removed_retrieval)
+            return PreparedPrompt(payload, token_ids, removed_history, removed_retrieval,
+                                  tuple(range(removed_history, len(history))))
         if retained:
             retained.pop(0)
             removed_history += 1

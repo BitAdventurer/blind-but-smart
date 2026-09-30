@@ -27,12 +27,17 @@ class Prediction:
 
 
 class TrajectoryExecutionError(ValueError):
-    """A failed invocation with its already-spent disclosure preserved."""
+    """A stopped trajectory with completed releases and its actual debit."""
 
-    def __init__(self, message, records, *, used_budget):
+    def __init__(self, message, records, *, used_budget, failed_slot, failure_stage,
+                 failed_slot_invoked, error_type):
         super().__init__(message)
         self.records = records
         self.used_budget = used_budget
+        self.failed_slot = failed_slot
+        self.failure_stage = failure_stage
+        self.failed_slot_invoked = failed_slot_invoked
+        self.error_type = error_type
 
 
 def correct_grounding(point, box) -> bool:
@@ -129,10 +134,28 @@ def _run_trajectory(slots, feature_loader, allocator, execute, score, *, ledger=
         if slot.eligible:
             eligible_index += 1
         captured={}
+        failure_stage = 'release'
+        def trusted_load():
+            nonlocal failure_stage
+            failure_stage = 'feature_input'
+            features = feature_loader(t)
+            failure_stage = 'release'
+            return features
         def trusted_allocate(observation):
+            nonlocal failure_stage
+            failure_stage = 'allocation'
             captured['observation']=np.asarray(observation, dtype=np.float32).copy()
-            return allocator(observation)
-        release=ledger.release_step(lambda:feature_loader(t), trusted_allocate, prior_feedback=previous_feedback)
+            proposal = allocator(observation)
+            failure_stage = 'release'
+            return proposal
+        try:
+            release=ledger.release_step(trusted_load, trusted_allocate, prior_feedback=previous_feedback)
+        except Exception as error:
+            # This slot has no completed release. Do not invent an invocation or
+            # a zero-cost padding row; preserve earlier releases separately.
+            raise TrajectoryExecutionError(str(error), records.copy(), used_budget=ledger.used_budget,
+                failed_slot=t, failure_stage=failure_stage, failed_slot_invoked=False,
+                error_type=type(error).__name__) from error
         record={'slot':t, 'eligible':slot.eligible, 'invoked':release.invoked,
                 'status':release.status, 'correct':False, 'candidate_count':release.k,
                 'used_budget':release.used_budget, 'remaining_budget':release.remaining_budget,
@@ -148,7 +171,9 @@ def _run_trajectory(slots, feature_loader, allocator, execute, score, *, ledger=
                 correct, details=score(prediction, slot)
             except Exception as error:
                 record.update(status="EXECUTION_ERROR", error_type=type(error).__name__)
-                raise TrajectoryExecutionError(str(error), records+[record], used_budget=ledger.used_budget) from error
+                raise TrajectoryExecutionError(str(error), records+[record], used_budget=ledger.used_budget,
+                    failed_slot=t, failure_stage='execution', failed_slot_invoked=True,
+                    error_type=type(error).__name__) from error
             mean_budget=float(np.mean(release.executed_budgets))
             reward=float(correct)+.5*(math.log(5)-math.log(mean_budget))/(math.log(5)-math.log(1.5))-.1*(release.k-1)/19
             transitions.append({'observation':captured['observation'], 'executed_budgets':release.executed_budgets.copy(),

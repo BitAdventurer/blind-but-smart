@@ -132,14 +132,29 @@ then trajectory ID, original slot, and task. Zero keys/query means yield zero
 similarity. The strict view uses the primary-selected threshold. Single-screen
 protocols must pass an empty/disabled bank.
 
+Each returned retrieval carries `(trajectory_id, original_slot, task)` from its
+bank entry. After token trimming, `candidates.jsonl` records only the retained
+entries in `retained_retrieval_ids`, in prompt order. `retained_history_positions`
+contains zero-based positions in the original history list of that run's bound
+manifest row; it is empty for Grounding. These fields are local trace metadata
+and never enter the rendered prompt, scoring text, or model tokens. Legacy
+custom retrieval objects without source metadata export `null`, not inferred IDs.
+
 ## Failed runs and evidence boundary
 
 Prompt preflight and Action reference validation should finish before any private
-screen access. If generation, parsing infrastructure, or the externally bound
-scorer raises after a release, `TrajectoryExecutionError` retains the partial
-records and already-spent budget. The driver must withhold aggregate benchmark
-results for that failed run. Ordinary candidate parse failures instead retain
-their original invalid-output treatment and remain in the denominator.
+screen access. `TrajectoryExecutionError` preserves earlier completed records,
+the actual ledger debit, and the failed slot/stage if admitted input loading,
+allocation, release construction, generation, or the externally bound scorer
+raises. A slot with no completed release is not added as an invocation or padding.
+If execution fails after a completed release, that invocation remains recorded.
+The CLI saves `transcript.jsonl`, `trusted-inputs.json`, and `aborted.json`,
+including earlier completed trajectories. The abort status distinguishes runs
+with no completed releases from those with prior releases; diagnostic messages
+contain only the stage and exception type. These are trusted local diagnostics,
+not supported public mechanism transcripts. Failed runs produce no completed
+`run.json`, replay, or aggregate benchmark result. Ordinary candidate parse
+failures retain their invalid-output treatment and remain in the denominator.
 
 Saved replay can preserve `slot_id`, `next_slot_id`, `source_manifest_sha256`,
 `task`, and `family_id` as non-pickle Unicode arrays. When a metadata field is

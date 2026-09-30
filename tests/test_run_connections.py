@@ -1,5 +1,6 @@
 """Cross-command software fixtures: no model downloads or benchmark execution."""
 import json
+import numpy as np
 import pytest
 
 from gui_joint_control.cli import main, versions
@@ -100,6 +101,76 @@ def test_environment_records_actual_cpu_precision_without_host_identity():
     assert result['python'] and result['os'] and result['unicode']
     assert result['gpu_name'] is None
     assert not {'hostname', 'user', 'home', 'cwd'}.intersection(result)
+
+
+@pytest.mark.parametrize('failure_slot', [0, 1])
+@pytest.mark.parametrize('failure_kind,stage', [
+    ('missing_input', 'feature_input'), ('invalid_features', 'release'),
+    ('allocator', 'allocation'), ('invalid_proposal', 'release')])
+def test_ledger_failure_preserves_completed_releases_without_inventing_invocation(
+        tmp_path, monkeypatch, failure_slot, failure_kind, stage):
+    from gui_joint_control import evaluation, runtime
+    manifest, rows = fixtures(tmp_path)
+    if failure_kind == 'missing_input':
+        rows[failure_slot]['features_path'] = 'missing.npy'
+    elif failure_kind == 'invalid_features':
+        np.save(tmp_path / 'invalid.npy', np.full((25, 256), np.nan), allow_pickle=False)
+        rows[failure_slot]['features_path'] = 'invalid.npy'
+    write_manifest(manifest, rows)
+    attempts = []
+    def allocate(_observation):
+        index = len(attempts)
+        attempts.append(index)
+        if index == failure_slot:
+            if failure_kind == 'allocator':
+                raise ValueError('private-probe-data must not enter persisted error text')
+            if failure_kind == 'invalid_proposal':
+                return np.full(25, np.nan), 1
+        return np.full(25, 3.), 1
+    monkeypatch.setattr(runtime, 'behavior_allocator', lambda rng: allocate)
+    monkeypatch.setattr(evaluation, 'RecordedEvaluator', lambda args: RecordedEvaluator(args, model=FakeModel()))
+    output = tmp_path / 'aborted'
+    with pytest.raises(TrajectoryExecutionError) as failure:
+        main(['collect-grounding', '--manifest', str(manifest), '--output', str(output),
+              '--family-id', 'fixture-1', '--split', 'test', '--disable-retrieval'])
+    aborted = json.loads((output / 'aborted.json').read_text(encoding='utf-8'))
+    transcript = [json.loads(line) for line in (output / 'transcript.jsonl').read_text(encoding='utf-8').splitlines()]
+    assert failure.value.__cause__ is not None
+    assert aborted['failure_stage'] == stage and aborted['failed_slot'] == failure_slot
+    assert not aborted['failed_slot_invoked']
+    assert aborted['failed_trajectory_used_budget'] == 75. * failure_slot
+    assert len(transcript) == failure_slot
+    assert all(row['invoked'] and row['slot'] < failure_slot for row in transcript)
+    assert len(list((output / 'releases').glob('*.npy'))) == failure_slot
+    assert aborted['status'] == ('aborted_after_release' if failure_slot else 'aborted_before_release')
+    assert aborted['manifest_sha256'] == file_hash(manifest)
+    assert aborted['transcript_sha256'] == file_hash(output / 'transcript.jsonl')
+    assert 'private-probe-data' not in (output / 'aborted.json').read_text(encoding='utf-8')
+    assert (output / 'trusted-inputs.json').exists()
+    assert not (output / 'run.json').exists() and not (output / 'replay.npz').exists()
+    from gui_joint_control.reporting import build_summary
+    with pytest.raises(ValueError, match='aborted'):
+        build_summary(output)
+
+
+def test_ledger_failure_on_later_trajectory_retains_prior_complete_trace(tmp_path, monkeypatch):
+    from gui_joint_control import evaluation
+    manifest, rows = fixtures(tmp_path)
+    write_manifest(manifest, [{**rows[0], 'trajectory_id': 'first'},
+                             {**rows[0], 'trajectory_id': 'second', 'features_path': 'missing.npy'}])
+    monkeypatch.setattr(evaluation, 'RecordedEvaluator', lambda args: RecordedEvaluator(args, model=FakeModel()))
+    output = tmp_path / 'aborted'
+    with pytest.raises(TrajectoryExecutionError):
+        main(['collect-grounding', '--manifest', str(manifest), '--output', str(output),
+              '--family-id', 'fixture-1', '--split', 'test', '--disable-retrieval'])
+    aborted = json.loads((output / 'aborted.json').read_text(encoding='utf-8'))
+    assert aborted['status'] == 'aborted_after_release'
+    assert aborted['failed_trajectory_id'] == 'second' and aborted['failed_slot'] == 0
+    assert aborted['failed_trajectory_used_budget'] == 0 and not aborted['failed_slot_invoked']
+    assert len(aborted['partial_records']) == 56
+    assert {row['trajectory_id'] for row in aborted['partial_records']} == {'first'}
+    assert sum(row['invoked'] for row in aborted['partial_records']) == 1
+    assert aborted['partial_records'][-1]['used_budget'] > 0
 
 
 def test_manifest_mutation_cannot_rebind_executed_population(tmp_path):

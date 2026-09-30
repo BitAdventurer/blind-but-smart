@@ -147,6 +147,9 @@ def test_recorded_driver_released_boundary_scores_and_replay_metadata(tmp_path, 
     assert len(exports) == 2
     assert len(list((tmp_path / "result/releases").glob("*.npy"))) == 2  # once per invocation, not once per candidate
     assert all(len(row["public_decoder_seeds"]) == len(row["candidates"]) for row in exports)
+    assert all(row['retained_retrieval_ids'] == [] for row in exports)
+    assert all(row['retained_history_positions'] == (list(range(2, 12)) if task == 'A' else [])
+               for row in exports)
     if task == "A":
         assert report["function_accuracy"] == report["status_accuracy"] == 1.
         assert report["arguments_accuracy"] == .5 and len(score_calls) == 2
@@ -154,6 +157,29 @@ def test_recorded_driver_released_boundary_scores_and_replay_metadata(tmp_path, 
             assert kwargs["scoring_text"].splitlines() == ["Public request"] + rows[0]["history"][-10:]
             assert "thought-0\n" not in kwargs["prompt_text"]
         assert all(row["removed_history"] == 2 for row in exports)
+
+
+def test_candidate_trace_exports_only_retained_retrieval_sources(tmp_path, monkeypatch):
+    from gui_joint_control.prompt_policy import Retrieval
+    manifest, rows = fixtures(tmp_path)
+    bank_path, keys_path = bank_artifacts(tmp_path, manifest, rows)
+    model = FakeModel()
+    evaluator = RecordedEvaluator(arguments(disable_retrieval=False, retrieval_bank=str(bank_path),
+        retrieval_keys=str(keys_path), retrieval_threshold=.25), model=model)
+    text = json.dumps({'instruction': 'x' * 3000, 'coordinate': [.5, .5], 'element_type': 'button'})
+    entries = (Retrieval(text, .9, ('source-one', 1, 'G')),
+               Retrieval(text, .9, ('source-two', 2, 'G')))
+    monkeypatch.setattr(evaluator.bank, 'retrieve', lambda *args: entries)
+    output = tmp_path / 'result'
+    evaluator.run(manifest, output=output)
+    exports = [json.loads(line) for line in (output / 'candidates.jsonl').read_text(encoding='utf-8').splitlines()]
+    for row in exports:
+        assert row['removed_retrieval'] == 1 and row['retrieval_count'] == 1
+        assert row['retained_retrieval_ids'] == [{'trajectory_id': 'source-one', 'original_slot': 1, 'task': 'G'}]
+        assert row['retained_history_positions'] == []
+    for _, kwargs in model.calls:
+        assert 'source-one' not in kwargs['prompt_text'] and 'source-two' not in kwargs['prompt_text']
+        assert kwargs['scoring_text'] == rows[0]['instruction']
 
 
 def test_invalid_action_reference_is_rejected_before_private_file_access(tmp_path):

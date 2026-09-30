@@ -26,6 +26,7 @@ the supplied C.6, C.7, D.6 and F.5 table arithmetic with Python's standard libra
 - Explicit ten-family controller plans and three evaluations per fitted checkpoint.
 - Validated dataset preparation from supplied records and trajectory split assignments.
 - Transcript-verified run summaries with explicit metric denominators and runtime bindings.
+- Failure traces preserving completed disclosure and explicit retained prompt-source identifiers.
 
 Read the [runtime guide](docs/NAACL_RUNTIME.md), [Action and retrieval schemas](docs/action-retrieval.md), [family protocol](docs/MANUSCRIPT_PROTOCOL.md), and [alignment notes](docs/MANUSCRIPT_ALIGNMENT.md).
 

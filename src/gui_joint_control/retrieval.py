@@ -243,4 +243,6 @@ class FrozenDemonstrationBank:
         order = sorted((i for i, score in enumerate(scores) if score > .15),
                        key=lambda i: (-float(scores[i]), self.entries[i].trajectory_id,
                                       self.entries[i].original_slot, self.entries[i].task))[:8]
-        return tuple(Retrieval(self.entries[i].text, float(scores[i])) for i in order)
+        return tuple(Retrieval(self.entries[i].text, float(scores[i]),
+                               (self.entries[i].trajectory_id, self.entries[i].original_slot,
+                                self.entries[i].task)) for i in order)
