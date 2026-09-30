@@ -1,0 +1,430 @@
+{
+  "status": "pass",
+  "rounded_numeric_checks_passed": 54,
+  "input_sha256": {
+    "C_6.tex": "77d1d129bf0c17f4f73b1d53a210ed0f82fb753098ca9b81a9b6da01329d82cd",
+    "C_7.tex": "6f75e4b7276c49b99fced6f3241002834e71b4097c70a5f737615515abdaccc0",
+    "D_6.tex": "428b27dc1376de9a7a923c53103463682001635e91689a9c26e3c4dd2f367183",
+    "F_5.tex": "75dedfb9c29999bc8e3ee571eecdd5eca8f99dc931a6fd3d5f77f1eafa3f6e8d"
+  },
+  "scope": "Arithmetic from published aggregates only; not an experimental rerun or raw-record verification.",
+  "exclusions": [
+    "Raw predictions and fitting/evaluation execution",
+    "G attack intervals",
+    "Retention reconstruction",
+    "F.5 intervals: Independent-1M family-level inputs are absent"
+  ],
+  "C6_means_pct": {
+    "G_H": 76.6,
+    "G_TMS": 72.1,
+    "G_CB": 73.61,
+    "G_Independent": 73.56,
+    "G_Likelihood": 73.94,
+    "A_H": 46.79,
+    "A_TMS": 41.8,
+    "A_CB": 43.79,
+    "A_Independent": 44.93
+  },
+  "C7_contrasts": [
+    {
+      "task": "Grounding",
+      "contrast": "H--TMS",
+      "family_differences_pp": [
+        4.0,
+        4.1,
+        4.7,
+        3.8,
+        4.3,
+        5.4,
+        4.4,
+        5.5,
+        4.0,
+        4.8
+      ],
+      "mean_pp": 4.5,
+      "conditional_interval_pp": [
+        4.066666666666666,
+        4.94
+      ],
+      "exact_interval": [
+        "61/15",
+        "247/50"
+      ],
+      "rounding_envelope_pp": [
+        3.966666666666667,
+        5.04
+      ],
+      "p_upper_1pp": 0.0009765625,
+      "p_Holm": 0.00390625
+    },
+    {
+      "task": "Grounding",
+      "contrast": "H--CB",
+      "family_differences_pp": [
+        3.2,
+        3.6,
+        2.1,
+        3.2,
+        3.4,
+        3.4,
+        2.7,
+        2.8,
+        2.8,
+        2.7
+      ],
+      "mean_pp": 2.99,
+      "conditional_interval_pp": [
+        2.7,
+        3.3
+      ],
+      "exact_interval": [
+        "27/10",
+        "33/10"
+      ],
+      "rounding_envelope_pp": [
+        2.6,
+        3.4
+      ],
+      "p_upper_1pp": 0.0009765625,
+      "p_Holm": 0.00390625
+    },
+    {
+      "task": "Action Step",
+      "contrast": "H--TMS",
+      "family_differences_pp": [
+        5.7,
+        4.0,
+        5.5,
+        3.7,
+        5.3,
+        6.8,
+        4.2,
+        5.3,
+        3.5,
+        5.9
+      ],
+      "mean_pp": 4.99,
+      "conditional_interval_pp": [
+        4.2,
+        5.825
+      ],
+      "exact_interval": [
+        "21/5",
+        "233/40"
+      ],
+      "rounding_envelope_pp": [
+        4.1,
+        5.925
+      ],
+      "p_upper_1pp": 0.0009765625,
+      "p_Holm": 0.00390625
+    },
+    {
+      "task": "Action Step",
+      "contrast": "H--CB",
+      "family_differences_pp": [
+        4.5,
+        2.7,
+        2.7,
+        2.7,
+        4.1,
+        4.7,
+        2.7,
+        0.8,
+        2.8,
+        2.3
+      ],
+      "mean_pp": 3.0,
+      "conditional_interval_pp": [
+        2.125,
+        3.8
+      ],
+      "exact_interval": [
+        "17/8",
+        "19/5"
+      ],
+      "rounding_envelope_pp": [
+        2.025,
+        3.9
+      ],
+      "p_upper_1pp": 0.001953125,
+      "p_Holm": 0.00390625
+    },
+    {
+      "task": "Grounding",
+      "contrast": "H--Independent",
+      "family_differences_pp": [
+        3.5,
+        3.2,
+        3.3,
+        3.3,
+        2.9,
+        2.9,
+        2.9,
+        2.8,
+        2.8,
+        2.8
+      ],
+      "mean_pp": 3.04,
+      "conditional_interval_pp": [
+        2.85,
+        3.2333333333333334
+      ],
+      "exact_interval": [
+        "57/20",
+        "97/30"
+      ],
+      "rounding_envelope_pp": [
+        2.75,
+        3.3333333333333335
+      ]
+    },
+    {
+      "task": "Action Step",
+      "contrast": "H--Independent",
+      "family_differences_pp": [
+        2.3,
+        1.9,
+        2.0,
+        1.9,
+        1.7,
+        1.7,
+        1.8,
+        1.7,
+        1.8,
+        1.8
+      ],
+      "mean_pp": 1.86,
+      "conditional_interval_pp": [
+        1.75,
+        2.0
+      ],
+      "exact_interval": [
+        "7/4",
+        "2"
+      ],
+      "rounding_envelope_pp": [
+        1.65,
+        2.1
+      ]
+    },
+    {
+      "task": "Grounding",
+      "contrast": "Full--Likelihood only",
+      "family_differences_pp": [
+        2.8,
+        2.5,
+        2.8,
+        2.5,
+        2.6,
+        2.8,
+        2.6,
+        2.8,
+        2.6,
+        2.6
+      ],
+      "mean_pp": 2.66,
+      "conditional_interval_pp": [
+        2.56,
+        2.75
+      ],
+      "exact_interval": [
+        "64/25",
+        "11/4"
+      ],
+      "rounding_envelope_pp": [
+        2.46,
+        2.85
+      ]
+    }
+  ],
+  "D6_methods": {
+    "NATIVE-1": {
+      "eligible_n": 1250,
+      "correct_counts": [
+        1112,
+        1113,
+        1114
+      ],
+      "seed_accuracy_pct": [
+        88.96,
+        89.04,
+        89.12
+      ],
+      "mean_pct": 89.04,
+      "sample_sd_pp": 0.08
+    },
+    "NATIVE-SFT-1": {
+      "eligible_n": 1272,
+      "correct_counts": [
+        1117,
+        1118,
+        1116
+      ],
+      "seed_accuracy_pct": [
+        87.81446540880503,
+        87.89308176100629,
+        87.73584905660377
+      ],
+      "mean_pct": 87.81446540880503,
+      "sample_sd_pp": 0.07861635220125786
+    },
+    "NATIVE-SFT-MP": {
+      "eligible_n": 1272,
+      "correct_counts": [
+        1152,
+        1160,
+        1158
+      ],
+      "seed_accuracy_pct": [
+        90.56603773584905,
+        91.19496855345912,
+        91.0377358490566
+      ],
+      "mean_pct": 90.9329140461216,
+      "sample_sd_pp": 0.3273059747588259
+    },
+    "PNN-1": {
+      "eligible_n": 1272,
+      "correct_counts": [
+        1039,
+        1040,
+        1039
+      ],
+      "seed_accuracy_pct": [
+        81.68238993710692,
+        81.76100628930817,
+        81.68238993710692
+      ],
+      "mean_pct": 81.70859538784067,
+      "sample_sd_pp": 0.04538917210610265
+    },
+    "PNN-MP": {
+      "eligible_n": 1272,
+      "correct_counts": [
+        1085,
+        1092,
+        1089
+      ],
+      "seed_accuracy_pct": [
+        85.29874213836477,
+        85.84905660377359,
+        85.61320754716981
+      ],
+      "mean_pct": 85.58700209643605,
+      "sample_sd_pp": 0.27609155536825836
+    },
+    "TMS": {
+      "eligible_n": 1272,
+      "correct_counts": [
+        989,
+        1000,
+        995
+      ],
+      "seed_accuracy_pct": [
+        77.75157232704403,
+        78.61635220125787,
+        78.22327044025157
+      ],
+      "mean_pct": 78.19706498951781,
+      "sample_sd_pp": 0.4329851059187187
+    },
+    "H": {
+      "eligible_n": 1272,
+      "correct_counts": [
+        1043,
+        1051,
+        1047
+      ],
+      "seed_accuracy_pct": [
+        81.99685534591195,
+        82.62578616352201,
+        82.31132075471699
+      ],
+      "mean_pct": 82.31132075471699,
+      "sample_sd_pp": 0.31446540880503143
+    }
+  },
+  "D6_H_minus_TMS": {
+    "correct_count_differences": [
+      54,
+      51,
+      52
+    ],
+    "seed_differences_pp": [
+      4.245283018867925,
+      4.009433962264151,
+      4.088050314465409
+    ],
+    "mean_pp": 4.114255765199162,
+    "sample_sd_pp": 0.12008846160785744,
+    "scope": "Descriptive differences aligned by listed seed columns; fitted components fixed; no interval or refit inference."
+  },
+  "F5": {
+    "H_minus_Independent1M_pp": [
+      1.67,
+      1.64
+    ],
+    "Independent1M_minus_500k_pp": [
+      1.37,
+      0.22
+    ],
+    "intervals_recomputed": false
+  },
+  "checks": [
+    "C.6 mean G_H",
+    "C.6 mean G_TMS",
+    "C.6 mean G_CB",
+    "C.6 mean G_Independent",
+    "C.6 mean G_Likelihood",
+    "C.6 mean A_H",
+    "C.6 mean A_TMS",
+    "C.6 mean A_CB",
+    "C.6 mean A_Independent",
+    "C.7 Grounding H--TMS mean",
+    "C.7 Grounding H--TMS lower",
+    "C.7 Grounding H--TMS upper",
+    "C.7 Grounding H--TMS p_upper_1pp",
+    "C.7 Grounding H--TMS p_Holm",
+    "C.7 Grounding H--CB mean",
+    "C.7 Grounding H--CB lower",
+    "C.7 Grounding H--CB upper",
+    "C.7 Grounding H--CB p_upper_1pp",
+    "C.7 Grounding H--CB p_Holm",
+    "C.7 Action Step H--TMS mean",
+    "C.7 Action Step H--TMS lower",
+    "C.7 Action Step H--TMS upper",
+    "C.7 Action Step H--TMS p_upper_1pp",
+    "C.7 Action Step H--TMS p_Holm",
+    "C.7 Action Step H--CB mean",
+    "C.7 Action Step H--CB lower",
+    "C.7 Action Step H--CB upper",
+    "C.7 Action Step H--CB p_upper_1pp",
+    "C.7 Action Step H--CB p_Holm",
+    "C.7 Grounding H--Independent mean",
+    "C.7 Grounding H--Independent lower",
+    "C.7 Grounding H--Independent upper",
+    "C.7 Action Step H--Independent mean",
+    "C.7 Action Step H--Independent lower",
+    "C.7 Action Step H--Independent upper",
+    "C.7 Grounding Full--Likelihood only mean",
+    "C.7 Grounding Full--Likelihood only lower",
+    "C.7 Grounding Full--Likelihood only upper",
+    "D.6 NATIVE-1 mean",
+    "D.6 NATIVE-1 SD",
+    "D.6 NATIVE-SFT-1 mean",
+    "D.6 NATIVE-SFT-1 SD",
+    "D.6 NATIVE-SFT-MP mean",
+    "D.6 NATIVE-SFT-MP SD",
+    "D.6 PNN-1 mean",
+    "D.6 PNN-1 SD",
+    "D.6 PNN-MP mean",
+    "D.6 PNN-MP SD",
+    "D.6 TMS mean",
+    "D.6 TMS SD",
+    "D.6 H mean",
+    "D.6 H SD",
+    "F.5 H-Independent-1M Grounding",
+    "F.5 H-Independent-1M Action"
+  ]
+}

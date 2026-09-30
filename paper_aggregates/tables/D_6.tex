@@ -1,0 +1,26 @@
+\begin{table*}[!tbp]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.13}
+\renewcommand{\thetable}{D.\arabic{table}}
+\renewcommand{\theHtable}{D.\arabic{table}}
+\setcounter{table}{5}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lrrrr}
+\toprule
+Method & Eligible $n$ & Correct per seed (1 / 2 / 3) & Overall (\%), mean $\pm$ SD & Retention (\%) \\
+\midrule
+NATIVE-1$^\dagger$ & 1,250 & 1,112 / 1,113 / 1,114 & 89.0 $\pm$ 0.1 & N/A \\
+NATIVE-SFT-1 & 1,272 & 1,117 / 1,118 / 1,116 & 87.8 $\pm$ 0.1 & N/A \\
+NATIVE-SFT-MP & 1,272 & 1,152 / 1,160 / 1,158 & 90.9 $\pm$ 0.3 & N/A \\
+PNN-1 & 1,272 & 1,039 / 1,040 / 1,039 & 81.7 $\pm$ 0.0 & 100 \\
+PNN-MP & 1,272 & 1,085 / 1,092 / 1,089 & 85.6 $\pm$ 0.3 & 100 \\
+TMS & 1,272 & 989 / 1,000 / 995 & 78.2 $\pm$ 0.4 & 91.4 \\
+H & 1,272 & 1,043 / 1,051 / 1,047 & 82.3 $\pm$ 0.3 & 93.2 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\caption{ScreenSpot-v2 results over three evaluation seeds with fitted models fixed. Overall is the mean accuracy and sample SD across seeds; counts are out of the stated eligible population for each seed. PNN-1\textquotesingle s SD is 0.045 pp before rounding. The mean H--TMS difference is 4.1143 pp; no paired difference interval is reported. Retention is the reported ratio to each method\textquotesingle s matched-unperturbed replay, not to a PNN row (Appendix~\ref{sec:C.5}). $^\dagger$NATIVE-1 is unfitted; its 118 Desktop/Icon items exclude 18 decoding failures and four invalid boxes (87/88/88 correct, 74.3\%), giving a different 1,250-item population.}
+\label{tab:D.6}
+\end{table*}

@@ -1,0 +1,26 @@
+\begin{table*}[!tbp]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.13}
+\renewcommand{\thetable}{C.\arabic{table}}
+\renewcommand{\theHtable}{C.\arabic{table}}
+\setcounter{table}{6}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{llrrrr}
+\toprule
+Task & Contrast & Mean (pp) & \shortstack[r]{Individual 95\%\\interval (pp)} & $p_{+1}$ & $p_{\mathrm{Holm}}$ \\
+\midrule
+Grounding & H--TMS & 4.50 & [4.067, 4.940] & 0.00098 & 0.00391 \\
+Grounding & H--CB & 2.99 & [2.700, 3.300] & 0.00098 & 0.00391 \\
+Action Step & H--TMS & 4.99 & [4.200, 5.825] & 0.00098 & 0.00391 \\
+Action Step & H--CB & 3.00 & [2.125, 3.800] & 0.00195 & 0.00391 \\
+Grounding & H--Independent & 3.04 & [2.850, 3.233] & --- & --- \\
+Action Step & H--Independent & 1.86 & [1.750, 2.000] & --- & --- \\
+Grounding & Full--Likelihood only & 2.66 & [2.560, 2.750] & --- & --- \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\caption{Conditional sign-flip diagnostics from the rounded experimental family summaries. $p_{+1}$ is the upper-tail test at +1 pp; Holm adjusts only the original four utility tests; the added three contrasts report intervals without additional hypothesis tests. Intervals are individual, not simultaneous. Coverage and test interpretation require the stated assumptions; no compound accuracy/resource decision is made.}
+\label{tab:C.7}
+\end{table*}

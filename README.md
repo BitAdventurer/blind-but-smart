@@ -13,6 +13,10 @@ Admission precedes private screen access. The probe guides allocation, fresh Gau
 
 ## Implemented workflow
 
+The [recorded metadata evaluator](experiments/README.md) provides Appendix G's pair/record bootstrap, explicit analyzed sample counts, and machine-readable calculation provenance.
+The [published-aggregate companion](paper_aggregates/analysis/README.md) checks
+the supplied C.6, C.7, D.6 and F.5 table arithmetic with Python's standard library.
+
 - Projection alignment and task-specific language q/v LoRA fitting.
 - H, CB, Disclosure-only, Count-only, Independent and Independent-1M controllers.
 - Immutable replay, explicit development-derived TMS schedules, resumable optimizer/RNG checkpoints.
@@ -20,8 +24,29 @@ Admission precedes private screen access. The probe guides allocation, fresh Gau
 - Released-input Grounding and Action execution; Action requires a supplied frozen schema and pinned evaluator.
 - Frozen Train-only retrieval, global public exclusion views and release-only queries.
 - Explicit ten-family controller plans and three evaluations per fitted checkpoint.
+- Validated dataset preparation from supplied records and trajectory split assignments.
+- Transcript-verified run summaries with explicit metric denominators and runtime bindings.
 
 Read the [runtime guide](docs/NAACL_RUNTIME.md), [Action and retrieval schemas](docs/action-retrieval.md), [family protocol](docs/MANUSCRIPT_PROTOCOL.md), and [alignment notes](docs/MANUSCRIPT_ALIGNMENT.md).
+
+## Prepare inputs and export results
+
+The [dataset preparation guide](docs/dataset-preparation.md) defines normalized
+Grounding/Action records and an explicit `train`/`dev`/`test` trajectory assignment.
+Preparation validates labels, coordinate units, paths and split overlap, excludes
+whole trajectories beyond 56 slots, and records source/manifests hashes and counts.
+
+```bash
+bbs prepare-dataset --records supplied/records.jsonl --splits supplied/splits.json --task G --output data/prepared-G
+# Run an evaluation with the fitted artifacts described below, then summarize it:
+bbs summarize-run --run-directory runs/H-test --output reports/H-test.json
+```
+
+The [run summary guide](docs/run-report.md) lists metrics and denominators.
+Summaries verify the transcript hash, complete slot grid, identities, outcome
+counts and budget ledger. They export aggregates and recorded bindings; prompt
+text, predictions, private-input hashes and local paths stay in the local run.
+Use new output paths for both commands.
 
 ## Install and check
 
@@ -85,9 +110,9 @@ Independent uses 500k additional iterations per component (1M aggregate); Indepe
 
 `selected.pt` is selected on development return; `last.pt` is the latest resumable state. `selection.json` records checksums and evaluations. Selected development traces are exported for TMS construction. A run shorter than the first 10k interval has no selected model.
 
-Evaluation writes provenance, fixed-slot local records, candidates and completed releases. Behavior collection also writes immutable replay with slot/task/family/source-manifest bindings. Local logs contain labels. Replay, private-input hashes and private randomizer states are trusted local artifacts, not protected public mechanism output.
+Evaluation writes provenance, fixed-slot local records, candidates and completed releases. It records the applied prompt cap/history policy and renderer/scoring code hashes, actual model device/precision, package versions, OS, Unicode and CUDA/cuDNN metadata. A failed invocation preserves the completed release, earlier trajectories and an artifact-bound `aborted.json`; failed runs cannot be summarized as completed evaluations. Behavior collection also writes immutable replay with slot/task/family/source-manifest bindings. Local logs contain labels. Replay, private-input hashes and private randomizer states are trusted local artifacts, not protected public mechanism output.
 
-The family planner starts with supplied frozen family/task executors; it does not itself establish ten complete executor refits. Dataset adapters, official Action schema/scorer, same-screen construction and actual run bindings must be supplied explicitly. They are not inferred from tables. This runtime contains no prepopulated benchmark scores.
+The family planner starts with supplied frozen family/task executors; it does not itself establish ten complete executor refits. Callers supply normalized benchmark records, trajectory splits, official Action schema/scorer and any same-screen population. The preparation command preserves these inputs and execution records their bindings. This runtime contains no prepopulated benchmark scores.
 
 Privacy calibration uses sensitivity .01 for the stated feature neighborhood with fixed public inputs. It does not cover arbitrary screenshot pairs or training-record privacy. Research floating-point randomizers are not production DP certification. Signed relevance is squared for Grounding weights, so weighting measures magnitude rather than exclusively positive alignment.
 

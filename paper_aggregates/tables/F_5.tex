@@ -1,0 +1,25 @@
+\begin{table}[!htbp]
+\centering
+\small
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1.13}
+\renewcommand{\thetable}{F.\arabic{table}}
+\renewcommand{\theHtable}{F.\arabic{table}}
+\setcounter{table}{4}
+\begin{adjustbox}{max width=\columnwidth}
+\begin{tabular}{@{}lcrr@{}}
+\toprule
+Method & \shortstack{Iterations\\component / total} & G (\%) & A (\%) \\
+\midrule
+H (joint) & 1M / 1M & 76.60 & 46.79 \\
+Independent-500k & 500k / 1M & 73.56 & 44.93 \\
+Independent-1M & 1M / 2M & 74.93 & 45.15 \\
+\midrule
+\multicolumn{2}{@{}l}{H $-$ Independent-1M (pp)} & +1.67 & +1.64 \\
+\multicolumn{2}{@{}l}{Individual conditional 95\% interval} & [1.35, 2.00] & [1.30, 1.95] \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\caption{Additional training allocation. G and A denote Grounding and Action. Each of ten family means averages three evaluations; baselines use the original summaries. Intervals condition on rounded inputs and the paired sign-flip assumptions, excluding rounding uncertainty. Appendix~\ref{sec:F.4} states the comparison's scope.}
+\label{tab:F.5}
+\end{table}

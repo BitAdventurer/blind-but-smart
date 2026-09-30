@@ -114,6 +114,8 @@ families: exactly 10 entries
 ```
 
 All artifacts are checked before plan creation and again before commands run.
+Final evaluation argv must explicitly include `--split test` or `--split evaluation`;
+missing, training and development split labels are rejected.
 Development and final evaluation manifests must be shared across all fitting
 families for each task. The frozen retrieval bank, keys, exclusion manifest and
 view are likewise shared per task; development-selected gate thresholds may

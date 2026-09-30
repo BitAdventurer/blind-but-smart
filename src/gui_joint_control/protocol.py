@@ -17,6 +17,7 @@ Registry schema (all paths should be absolute):
 Each argv starts with bbs or python -m gui_joint_control.cli. Binding-related
 flags are checked against the registry, so a command cannot silently substitute
 another replay, executor, split, family, method, seed, or selected checkpoint.
+Post-fit commands require an explicit --split test or --split evaluation.
 build_plan never executes commands; execute_plan is the explicit execution API.
 """
 from __future__ import annotations
@@ -317,6 +318,8 @@ are deliberately absent: runtime supplies fresh independent secret streams.
                     pairing.append((replicate, eval_seed))
                     output = _path(evaluation.get("output"))
                     argv, flags = _command(evaluation.get("argv"), "collect-grounding" if task_id == "G" else "collect-action")
+                    if flags.get("--split") not in ("test", "evaluation"):
+                        raise ValueError("Post-fit evaluation requires explicit --split test or evaluation")
                     expected = {**common, "--manifest": bound["manifest"]["path"], "--training-replay": bound["replay"]["path"],
                                 "--controller-config": bound["config"]["path"], "--controller-method": method_id,
                                 "--controller-checkpoint": selected, "--seed": eval_seed, "--replicate-id": replicate, "--output": output,

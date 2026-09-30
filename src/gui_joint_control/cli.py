@@ -7,6 +7,7 @@ import json
 import platform
 import time
 import uuid
+import unicodedata
 from dataclasses import asdict
 import numpy as np
 
@@ -22,11 +23,19 @@ def write_json(path,value):
     Path(path).write_text(json.dumps(value,indent=2,ensure_ascii=False,allow_nan=False)+'\n',encoding='utf-8')
 
 
-def versions():
-    result={'python':platform.python_version()}
-    for name in ('torch','numpy','scipy','transformers'):
+def versions(*, device=None, dtype=None):
+    result={'python':platform.python_version(), 'os':platform.system(),
+            'os_release':platform.release(), 'machine':platform.machine(),
+            'unicode':unicodedata.unidata_version,
+            'device':str(device) if device is not None else None,
+            'dtype':str(dtype).removeprefix('torch.') if dtype is not None else None}
+    for name in ('torch','numpy','scipy','transformers','peft','Pillow','accelerate','safetensors'):
         try:result[name]=importlib.metadata.version(name)
         except importlib.metadata.PackageNotFoundError:result[name]=None
+    import torch
+    result.update(cuda=torch.version.cuda, cudnn=torch.backends.cudnn.version(), gpu_name=None)
+    if device is not None and torch.device(device).type == 'cuda':
+        result['gpu_name'] = torch.cuda.get_device_name(torch.device(device))
     return result
 
 
@@ -103,7 +112,7 @@ def fit(args):
         episodes = []
         for replicate in range(1, args.dev_replicates + 1):
             _, traces = evaluator.run(args.dev_manifest, trainer=current,
-                replicate='development-' + str(replicate), tms_schedule=dev_schedule)
+                replicate='development-' + str(replicate), tms_schedule=dev_schedule, split='development')
             episodes.extend(traces)
         last_development['episodes'] = episodes
         return {'split':'development', 'manifest_sha256':file_hash(args.dev_manifest), 'episodes':episodes}
@@ -128,7 +137,10 @@ def fit(args):
                         'controller_checkpoint_sha256':file_hash(manager.selected_path),
                         'manifest_sha256':file_hash(args.dev_manifest), 'transcript_sha256':file_hash(trace),
                         'selected_iteration':trainer.iteration, 'replicates':args.dev_replicates,
-                        'score':selection['score'], 'reproduces_historical_results':False})
+                        'score':selection['score'], **evaluator.provenance,
+                        'runtime':versions(device=getattr(evaluator.model, 'device', None),
+                                           dtype=getattr(evaluator.model, 'dtype', None)),
+                        'selection_binding':binding, 'reproduces_historical_results':False})
     if manager:
         manager.save_last(trainer)
     else:
@@ -136,7 +148,7 @@ def fit(args):
     report = {'run_id':args.run_id or str(uuid.uuid4()), 'kind':'software_fixture_fit' if software_only else 'new_offline_controller_fit',
         'method':args.method, 'family_id':family, 'task':task,
         'updates_this_invocation':args.updates, 'component_updates':trainer.component_updates,
-        'replay':buffer.describe(), 'runtime':versions(), 'wall_seconds':time.perf_counter()-start,
+        'replay':buffer.describe(), 'runtime':versions(device=trainer.device, dtype='float32'), 'wall_seconds':time.perf_counter()-start,
         'config_sha256':file_hash(output/'config.json'),
         'checkpoint_selection':manager.state['criterion'] if manager else 'software fixture last update only',
         'selected_checkpoint':str(manager.selected_path) if manager and manager.best else None,
@@ -245,24 +257,26 @@ def collect(args):
         trainer.load_checkpoint(args.controller_checkpoint)
     evaluator = RecordedEvaluator(args)
     output = new_output(args.output)
-    try:
-        report, _ = evaluator.run(args.manifest, trainer=trainer, replicate=args.replicate_id,
-                                 output=output, tms_schedule=evaluation_schedule)
-    except TrajectoryExecutionError as error:
-        write_json(output/'aborted.json', {'status':'aborted_after_release', 'error':str(error),
-            'used_budget':error.used_budget, 'partial_records':error.records,
-            'benchmark_accuracy_computed':False})
-        raise
-    report.update(kind='new_recorded_controller_evaluation' if trainer or evaluation_schedule else 'new_behavior_collection',
-                  run_id=str(uuid.uuid4()), runtime=versions(),
+    binding = dict(kind='new_recorded_controller_evaluation' if trainer or evaluation_schedule else 'new_behavior_collection',
+                  run_id=str(uuid.uuid4()),
+                  runtime=versions(device=getattr(evaluator.model, 'device', None), dtype=getattr(evaluator.model, 'dtype', None)),
                   split=args.split or ('evaluation' if trainer or evaluation_schedule else 'fit-train'),
                   controller_method=args.controller_method if trainer else ('TMS' if evaluation_schedule else 'behavior'),
                   controller_checkpoint_sha256=file_hash(args.controller_checkpoint) if trainer else None,
                   controller_config_sha256=file_hash(args.controller_config) if trainer else None,
                   training_replay_sha256=file_hash(args.training_replay) if trainer else None,
                   tms_schedule_sha256=training_schedule.content_sha256 if training_schedule else None,
-                  evaluation_tms_schedule_sha256=evaluation_schedule.content_sha256 if evaluation_schedule else None,
-                  transcript_sha256=file_hash(output/'transcript.jsonl'))
+                  evaluation_tms_schedule_sha256=evaluation_schedule.content_sha256 if evaluation_schedule else None)
+    try:
+        report, _ = evaluator.run(args.manifest, trainer=trainer, replicate=args.replicate_id,
+                                 output=output, tms_schedule=evaluation_schedule, split=binding['split'])
+    except TrajectoryExecutionError as error:
+        write_json(output/'aborted.json', {**binding, **error.evaluation_context,
+            'status':'aborted_after_release', 'error':str(error), 'partial_records':error.records,
+            'transcript_sha256':file_hash(output/'transcript.jsonl'),
+            'benchmark_accuracy_computed':False, 'reproduces_historical_results':False})
+        raise
+    report.update(**binding, transcript_sha256=file_hash(output/'transcript.jsonl'))
     write_json(output/'run.json', report)
     print(json.dumps(report, indent=2))
 
@@ -291,6 +305,17 @@ def protocol_command(args):
         execute_plan(plan)
     else:
         print(json.dumps(plan, indent=2))
+
+
+def prepare_dataset_command(args):
+    from .dataset_preparation import prepare_dataset
+    report = prepare_dataset(args.records, args.splits, args.output, task=args.task, action_schema=args.action_schema)
+    print(json.dumps(report, indent=2))
+
+
+def summarize_run_command(args):
+    from .reporting import summarize_run
+    print(json.dumps(summarize_run(args.run_directory, args.output), indent=2))
 
 
 def build_tms(args):
@@ -355,6 +380,14 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     config_default = str(Path(__file__).resolve().parents[2]/'configs/naacl_reference.json')
+    prepare = commands.add_parser('prepare-dataset', help='Validate supplied records and explicit trajectory splits')
+    for field in ('records','splits','output'): prepare.add_argument('--'+field, required=True)
+    prepare.add_argument('--task', choices=['G','A'], required=True)
+    prepare.add_argument('--action-schema')
+    prepare.set_defaults(func=prepare_dataset_command)
+    summary = commands.add_parser('summarize-run', help='Validate a completed run and export aggregate metrics')
+    summary.add_argument('--run-directory', required=True); summary.add_argument('--output', required=True)
+    summary.set_defaults(func=summarize_run_command)
     train = commands.add_parser('train', help='Fit with held-out development checkpoint selection')
     train.add_argument('--config', default=config_default); train.add_argument('--replay', required=True)
     train.add_argument('--method', choices=METHODS, default='H')

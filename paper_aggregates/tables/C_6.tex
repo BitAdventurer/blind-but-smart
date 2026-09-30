@@ -1,0 +1,30 @@
+\begin{table*}[!tbp]
+\centering
+\small
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{1.13}
+\renewcommand{\thetable}{C.\arabic{table}}
+\renewcommand{\theHtable}{C.\arabic{table}}
+\setcounter{table}{5}
+\begin{adjustbox}{max width=\textwidth}
+\begin{tabular}{lrrrrrrrrr}
+\toprule
+Family & G: H & TMS & CB & Indep. & Lik. only & A: H & TMS & CB & Indep. \\
+\midrule
+1 & 80.3 & 76.3 & 77.1 & 76.8 & 77.5 & 52.1 & 46.4 & 47.6 & 49.8 \\
+2 & 78.1 & 74.0 & 74.5 & 74.9 & 75.6 & 47.9 & 43.9 & 45.2 & 46.0 \\
+3 & 78.9 & 74.2 & 76.8 & 75.6 & 76.1 & 48.6 & 43.1 & 45.9 & 46.6 \\
+4 & 78.4 & 74.6 & 75.2 & 75.1 & 75.9 & 47.9 & 44.2 & 45.2 & 46.0 \\
+5 & 75.5 & 71.2 & 72.1 & 72.6 & 72.9 & 46.1 & 40.8 & 42.0 & 44.4 \\
+6 & 75.2 & 69.8 & 71.8 & 72.3 & 72.4 & 46.2 & 39.4 & 41.5 & 44.5 \\
+7 & 75.7 & 71.3 & 73.0 & 72.8 & 73.1 & 45.7 & 41.5 & 43.0 & 43.9 \\
+8 & 74.8 & 69.3 & 72.0 & 72.0 & 72.0 & 44.2 & 38.9 & 43.4 & 42.5 \\
+9 & 74.9 & 70.9 & 72.1 & 72.1 & 72.3 & 44.4 & 40.9 & 41.6 & 42.6 \\
+10 & 74.2 & 69.4 & 71.5 & 71.4 & 71.6 & 44.8 & 38.9 & 42.5 & 43.0 \\
+Mean & 76.60 & 72.10 & 73.61 & 73.56 & 73.94 & 46.79 & 41.80 & 43.79 & 44.93 \\
+\bottomrule
+\end{tabular}
+\end{adjustbox}
+\caption{Three-evaluation mean accuracies paired by family ID. G and A denote Grounding accuracy (\%) and Action Step accuracy (\%). The final row averages the rounded inputs. The ten family rows are the analysis units; their 30 evaluation repeats remain nested within families. Indep. denotes Independent; Lik. only denotes Likelihood only: it removes the squared-score factor while retaining Full/H candidates and instruction-conditioned generation. Action uses joint Exact Step accuracy.}
+\label{tab:C.6}
+\end{table*}

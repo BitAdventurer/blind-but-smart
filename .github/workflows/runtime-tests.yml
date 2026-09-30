@@ -24,6 +24,6 @@ jobs:
           python-version: '3.12'
           cache: pip
       - run: python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
-      - run: python -m pip install -e '.[vlm,test]'
+      - run: python -m pip install -e '.[vlm,test,metadata]'
       - run: python -m pytest tests -q
       - run: bbs smoke --output runs/ci-smoke --updates 3

@@ -38,11 +38,12 @@ def slot_identifier(trajectory_id, slot):
     return json.dumps([str(trajectory_id), int(slot)], ensure_ascii=False, separators=(',', ':'))
 
 
-def manifest_rows(path, task='G'):
+def manifest_rows(path, task='G', *, content=None):
     if task not in ('G', 'A'):
         raise ValueError('Expected Grounding (G) or Action (A)')
     groups = {}
-    for number, line in enumerate(Path(path).read_text(encoding='utf-8').splitlines(), 1):
+    content = Path(path).read_bytes() if content is None else content
+    for number, line in enumerate(content.decode('utf-8').splitlines(), 1):
         if not line.strip():
             continue
         row = json.loads(line)
@@ -68,6 +69,7 @@ def assert_disjoint_manifests(training_replay, development_manifest, *, task):
     if identifiers is None:
         raise ValueError('Development selection requires replay slot_id provenance')
     groups = manifest_rows(development_manifest, task)
+    validate_manifest_split(groups, 'development')
     try:
         decoded = [json.loads(str(x)) for x in identifiers]
         if any(not isinstance(x, list) or len(x) != 2 or not isinstance(x[0], str) or type(x[1]) is not int for x in decoded):
@@ -79,6 +81,30 @@ def assert_disjoint_manifests(training_replay, development_manifest, *, task):
     source_hashes = training_replay.metadata.get('source_manifest_sha256', [])
     if file_hash(development_manifest) in source_hashes:
         raise ValueError('Training and development cannot use the same manifest')
+
+
+def validate_manifest_split(groups, split):
+    """Check supplied role declarations before release; retain legacy omissions."""
+    roles = {'train': 'fit-train', 'fit-train': 'fit-train',
+             'dev': 'development', 'development': 'development',
+             'test': 'test', 'evaluation': 'test'}
+    if split is not None and split not in roles:
+        raise ValueError('Unknown requested manifest split')
+    declared, undeclared = set(), 0
+    for group in groups.values():
+        for row in group.values():
+            if 'split' not in row:
+                undeclared += 1
+                continue
+            role = row['split']
+            if not isinstance(role, str) or role not in roles:
+                raise ValueError('Unknown declared manifest split')
+            declared.add(roles[role])
+            if split is not None and roles[role] != roles[split]:
+                raise ValueError('Declared manifest split differs from the requested run split')
+    if len(declared) > 1:
+        raise ValueError('A manifest cannot mix training, development and test roles')
+    return {'requested_split': split, 'declared_roles': sorted(declared), 'undeclared_records': undeclared}
 
 
 def decoder_seed(seed, trajectory, slot, candidate, *, family='', task='G', replicate='1'):
@@ -173,8 +199,23 @@ class RecordedEvaluator:
         if args.retrieval_threshold is not None and (
                 not math.isfinite(args.retrieval_threshold) or args.retrieval_threshold not in np.arange(0, 2.01, .25)):
             raise ValueError('Retrieval threshold must belong to the development grid 0,.25,...,2')
+        from . import prompt_policy, executor, scoring
         self.provenance = {
             'executor': self.model.provenance,
+            'model_device': str(self.model.device) if hasattr(self.model, 'device') else None,
+            'model_dtype': str(self.model.dtype).removeprefix('torch.') if hasattr(self.model, 'dtype') else None,
+            'prompt_policy': {
+                'version': prompt_policy.POLICY_VERSION,
+                'token_limit': prompt_policy.TOKEN_LIMIT,
+                'max_previous_steps': prompt_policy.MAX_PREVIOUS_STEPS,
+                'history_policy': 'chronological_tail_then_oldest_first',
+                'retrieval_policy': 'lowest_score_first',
+                'overflow_policy': 'reject_mandatory_overflow',
+                'renderer_sha256': file_hash(__file__),
+                'policy_sha256': file_hash(prompt_policy.__file__),
+                'executor_sha256': file_hash(executor.__file__),
+                'scoring_sha256': file_hash(scoring.__file__),
+            },
             'model_snapshot': artifact_binding(args.model, args.revision),
             'tokenizer_snapshot': artifact_binding(args.tokenizer or args.model, args.tokenizer_revision or args.revision),
             'dino_snapshot': artifact_binding(args.dino_model, args.dino_revision),
@@ -184,21 +225,25 @@ class RecordedEvaluator:
             'action_evaluator': self.evaluator_binding,
             'retrieval_bank_sha256': file_hash(args.retrieval_bank) if args.retrieval_bank else None,
             'retrieval_keys_sha256': file_hash(args.retrieval_keys) if args.retrieval_keys else None,
+            'retrieval_exclusion_manifest_sha256': file_hash(args.retrieval_exclusion_manifest)
+                if self.bank and getattr(args, 'retrieval_exclusion_manifest', None) else None,
             'retrieval_view': args.retrieval_view if self.bank else None,
             'retrieval_threshold': args.retrieval_threshold if self.bank else None,
             'retrieval_enabled': self.bank is not None,
         }
 
-    def run(self, manifest, *, trainer=None, replicate='1', output=None, tms_schedule=None):
-        from .runtime import (Slot, Prediction, behavior_allocator, run_trajectory,
+    def run(self, manifest, *, trainer=None, replicate='1', output=None, tms_schedule=None, split=None):
+        from .runtime import (Slot, Prediction, TrajectoryExecutionError, behavior_allocator, run_trajectory,
                               run_action_trajectory, save_replay)
         from .action_evaluation import ActionSlot, ActionPrediction
         from .prompt_policy import prepare_prompt
         from .features import DinoRegionalEncoder
         import torch
-        groups = manifest_rows(manifest, self.task)
+        manifest_bytes = Path(manifest).read_bytes()
+        groups = manifest_rows(manifest, self.task, content=manifest_bytes)
+        split_binding = validate_manifest_split(groups, split)
         base = Path(manifest).resolve().parent
-        manifest_sha256 = file_hash(manifest)
+        manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
         if trainer is not None and trainer.method in ('Disclosure-only', 'Count-only') and tms_schedule is None:
             raise ValueError('Single-head evaluation requires an explicit evaluation-population TMS schedule')
         if self.bank is not None:
@@ -213,6 +258,8 @@ class RecordedEvaluator:
                             raise ValueError('Current evaluation rows must belong to the complete frozen exclusion manifest')
         if tms_schedule is not None:
             validate_tms_population(tms_schedule, manifest, task=self.task, family=self.args.family_id)
+        population_binding = {'retrieval_exclusion_manifest_sha256': file_hash(exclusion) if self.bank else None,
+                              'manifest_split': split_binding}
         # Validate public mandatory text and offline reference schema before any
         # screen access. Full prompts are rechecked after release-only retrieval.
         for group in groups.values():
@@ -239,6 +286,23 @@ class RecordedEvaluator:
             output = Path(output)
             (output / 'releases').mkdir(parents=True, exist_ok=False)
         episodes, all_transitions, rows_out = [], [], []
+        method = trainer.method if trainer else ('TMS' if tms_schedule else 'behavior')
+
+        def identified_records(trajectory, records):
+            return [{'trajectory_id': trajectory, 'task': self.task,
+                     'family_id': self.args.family_id, 'replicate_id': str(replicate),
+                     'controller_method': method, **record} for record in records]
+
+        def persist_trace():
+            if output is None:
+                return
+            with (output / 'transcript.jsonl').open('w', encoding='utf-8') as stream:
+                for row in rows_out:
+                    stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + '\n')
+            (output / 'trusted-inputs.json').write_text(json.dumps({
+                'scope': 'trusted local only; not protected public mechanism output',
+                'admitted_input_sha256': self._trusted_input_hashes}, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+
         behavior = behavior_allocator(np.random.default_rng(self.args.seed))
         for trajectory, group in sorted(groups.items()):
             active = {}
@@ -288,6 +352,10 @@ class RecordedEvaluator:
                 return action['budgets'][0].cpu().numpy(), int(action['candidate_count'][0])
 
             def execute(release, text, history, count, prior_feedback):
+                # Disclosure already occurred: preserve it even if prediction fails.
+                if output is not None:
+                    name = hashlib.sha256(slot_identifier(trajectory, active['slot']).encode('utf-8')).hexdigest() + '.npy'
+                    np.save(output / 'releases' / name, release, allow_pickle=False)
                 retrieved = () if self.bank is None else self.bank.retrieve(
                     release, prior_feedback, self.args.retrieval_threshold)
                 render = lambda payload: render_prompt(payload, action_schema_text=self.action_schema_text)
@@ -304,14 +372,14 @@ class RecordedEvaluator:
                     result = None
                     prediction = ActionPrediction(action, feedback)
                 if output is not None:
-                    name = hashlib.sha256(slot_identifier(trajectory, active['slot']).encode('utf-8')).hexdigest() + '.npy'
-                    np.save(output / 'releases' / name, release, allow_pickle=False)
                     exported = {'trajectory_id': trajectory, 'slot': active['slot'], 'task': self.task,
                         'family_id': self.args.family_id, 'replicate_id': str(replicate),
                         'release_file': 'releases/' + name, 'public_decoder_seeds': seeds,
                         'input_ids': prepared.input_ids, 'scoring_text': prepared.payload.scoring_text,
                         'scoring_token_ids': self.model.tokenizer.encode(prepared.payload.scoring_text, add_special_tokens=False),
                         'retrieval_count': len(prepared.payload.retrieval),
+                        'input_token_count': len(prepared.input_ids),
+                        'history_count': len(prepared.payload.history),
                         'removed_history': prepared.removed_history, 'removed_retrieval': prepared.removed_retrieval,
                         'candidates': [asdict(c) for c in candidates]}
                     if hasattr(result, 'selected_index'):
@@ -320,11 +388,23 @@ class RecordedEvaluator:
                         stream.write(json.dumps(exported, ensure_ascii=False, allow_nan=False) + '\n')
                 return prediction
 
-            if self.task == 'G':
-                records, transitions = run_trajectory(slots, load_features, allocate, execute, executor_context=True)
-            else:
-                records, transitions = run_action_trajectory(
-                    slots, load_features, allocate, execute, evaluator=self.action_evaluator)
+            try:
+                if self.task == 'G':
+                    records, transitions = run_trajectory(slots, load_features, allocate, execute, executor_context=True)
+                else:
+                    records, transitions = run_action_trajectory(
+                        slots, load_features, allocate, execute, evaluator=self.action_evaluator)
+            except TrajectoryExecutionError as error:
+                rows_out.extend(identified_records(trajectory, error.records))
+                error.records = rows_out
+                error.evaluation_context = {
+                    'task': self.task, 'family_id': self.args.family_id, 'replicate_id': str(replicate),
+                    'controller_method': method, 'failed_trajectory_id': trajectory,
+                    'failed_slot': active['slot'], 'failed_trajectory_used_budget': error.used_budget,
+                    'manifest_sha256': manifest_sha256, 'public_seed': self.args.seed,
+                    **self.provenance, **population_binding}
+                persist_trace()
+                raise
             invoked_ids = [slot_identifier(trajectory, r['slot']) for r in records if r['invoked']]
             for index, transition in enumerate(transitions):
                 transition['slot_id'] = invoked_ids[index]
@@ -334,25 +414,23 @@ class RecordedEvaluator:
                 transition['family_id'] = self.args.family_id
             all_transitions.extend(transitions)
             episodes.append({'trajectory_id': trajectory, 'replicate': str(replicate), 'records': records})
-            rows_out.extend({'trajectory_id': trajectory, **record} for record in records)
+            rows_out.extend(identified_records(trajectory, records))
         if output is not None:
-            with (output / 'transcript.jsonl').open('w', encoding='utf-8') as stream:
-                for row in rows_out:
-                    stream.write(json.dumps(row, ensure_ascii=False, allow_nan=False) + '\n')
+            persist_trace()
+        if file_hash(manifest) != manifest_sha256:
+            raise ValueError('The bound manifest changed during evaluation; no completed run is published')
+        if output is not None:
             if trainer is None and tms_schedule is None:
                 save_replay(all_transitions, output / 'replay.npz')
-            (output / 'trusted-inputs.json').write_text(json.dumps({
-                'scope':'trusted local only; not protected public mechanism output',
-                'admitted_input_sha256':self._trusted_input_hashes}, indent=2, ensure_ascii=False)+'\n', encoding='utf-8')
         eligible = sum(r['eligible'] for r in rows_out)
         invoked = sum(r['invoked'] for r in rows_out)
         correct = sum(r['correct'] for r in rows_out)
         report = {'task': self.task, 'family_id': self.args.family_id, 'replicate_id': str(replicate),
                   'eligible': eligible, 'invoked': invoked, 'correct': correct,
                   'accuracy': correct / eligible if eligible else None,
-                  'manifest_sha256': file_hash(manifest), 'public_seed': self.args.seed,
+                  'manifest_sha256': manifest_sha256, 'public_seed': self.args.seed,
                   'decoder_seed_scheme': 'JDC-decoder-v2: seed/family/task/replicate/trajectory/slot/candidate',
-                  'model_dtype': self.args.dtype, **self.provenance, 'reproduces_historical_results': False}
+                  **self.provenance, **population_binding, 'reproduces_historical_results': False}
         if self.task == 'A':
             for field in ('function_correct', 'arguments_correct', 'status_correct'):
                 report[field] = sum(bool(r.get(field, False)) for r in rows_out)

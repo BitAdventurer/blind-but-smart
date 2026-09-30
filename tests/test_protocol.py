@@ -39,6 +39,7 @@ def registry_fixture(root):
             for replicate in range(3):
                 eval_output = str(root / family_id / method / ("eval-" + str(replicate)))
                 argv = ["bbs", "collect-grounding", *common, "--manifest", artifacts["manifest"]["path"],
+                        "--split", "test",
                         "--training-replay", artifacts["replay"]["path"], "--controller-config", artifacts["config"]["path"],
                         "--controller-method", method, "--controller-checkpoint", str(Path(output) / "selected.pt"),
                         "--seed", str(200 + replicate), "--replicate-id", str(replicate), "--output", eval_output]
@@ -99,6 +100,28 @@ class ProtocolTests(unittest.TestCase):
                 fit, *evaluations = plan["jobs"][index:index + 4]
                 self.assertTrue(all(row["depends_on"] == [fit["job_id"]] for row in evaluations))
                 self.assertEqual(len({row["selected_checkpoint"] for row in evaluations}), 1)
+
+    def test_post_fit_evaluation_requires_an_explicit_final_split(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            registry = registry_fixture(root)
+            for split in ("test", "evaluation", None, "development", "fit-train"):
+                with self.subTest(split=split):
+                    changed = copy.deepcopy(registry)
+                    for family in changed["families"]:
+                        for method in family["tasks"][0]["methods"]:
+                            for evaluation in method["evaluations"]:
+                                argv = evaluation["argv"]
+                                index = argv.index("--split")
+                                if split is None:
+                                    del argv[index:index + 2]
+                                else:
+                                    argv[index + 1] = split
+                    if split in ("test", "evaluation"):
+                        build_plan(changed, root / "plan")
+                    else:
+                        with self.assertRaisesRegex(ValueError, "explicit --split"):
+                            build_plan(changed, root / "plan")
 
     def test_commands_cannot_substitute_replay_seed_or_last_checkpoint(self):
         with tempfile.TemporaryDirectory() as directory:

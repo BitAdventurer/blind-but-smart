@@ -7,6 +7,10 @@ from dataclasses import dataclass
 import math
 from typing import Callable, Sequence
 
+TOKEN_LIMIT = 4096
+MAX_PREVIOUS_STEPS = 10
+POLICY_VERSION = "jdc-reference-v1"
+
 
 class PromptTooLong(ValueError):
     """Abort the new run: the current instruction cannot fit this protocol."""
@@ -41,7 +45,7 @@ class PreparedPrompt:
 def prepare_prompt(task: str, current: str, history: Sequence[str],
                    retrieval: Sequence[Retrieval],
                    render_token_ids: Callable[[PromptPayload], Sequence[int]],
-                   token_limit: int = 4096, max_previous_steps: int = 10) -> PreparedPrompt:
+                   token_limit: int = TOKEN_LIMIT, max_previous_steps: int = MAX_PREVIOUS_STEPS) -> PreparedPrompt:
     """Re-render with the real tokenizer/template after every whole-entry trim.
 
 The callback must return ALL model input token IDs, including wrapper, visual
