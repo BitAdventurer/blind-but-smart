@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import math
 from pathlib import Path
 import tempfile
 import unittest
@@ -182,6 +183,33 @@ class TrainingTests(unittest.TestCase):
         with patch.object(trainer.bundles["joint"]["actor"], "evaluation_action", return_value=fixed):
             evaluated = trainer.evaluation_action(np.zeros((1, 28)), remaining[:1])
         self.assertTrue(torch.all(evaluated["executed_budgets"] == 1.5))
+
+    def test_filter_matches_ledger_at_float64_proposal_sum_boundaries(self):
+        from gui_joint_control.privacy import filter_budgets as ledger_filter
+        # 25 x 2.3 rounds upward in torch.sum; seed 8 also supplies rows
+        # rounding downward. A one-ULP difference must not change the branch.
+        vectors = np.vstack((np.full((1, 25), 2.3),
+                             np.random.default_rng(8).uniform(1.5, 5.0, (12, 25))))
+        devices = ["cpu"] + (["cuda"] if torch.cuda.is_available() else [])
+        for device in devices:
+            for dtype in (torch.float32, torch.float64):
+                with self.subTest(device=device, dtype=dtype):
+                    originals = torch.tensor(vectors, dtype=dtype)
+                    totals = np.array([math.fsum(row) for row in originals.tolist()])
+                    remaining = np.column_stack((np.nextafter(totals, -np.inf), totals,
+                                                 np.nextafter(totals, np.inf))).ravel()
+                    proposals = originals.repeat_interleave(3, dim=0).to(device).requires_grad_(True)
+                    result = filter_budgets(proposals, torch.tensor(remaining, device=device))
+                    self.assertEqual(result.dtype, dtype)
+                    self.assertEqual(result.device, proposals.device)
+                    self.assertFalse(result.requires_grad)
+                    for row, available, actual in zip(proposals.detach().cpu().numpy(),
+                                                      remaining, result.cpu().numpy()):
+                        expected, _ = ledger_filter(row, available)
+                        np.testing.assert_array_equal(actual, expected)
+                    self.assertTrue(torch.all(result[::3] == 1.5))
+                    torch.testing.assert_close(result[1::3], proposals[1::3], rtol=0, atol=0)
+                    torch.testing.assert_close(result[2::3], proposals[2::3], rtol=0, atol=0)
 
     def test_real_h_update_changes_actor_critics_and_polyak_targets(self):
         trainer = self.make_trainer()

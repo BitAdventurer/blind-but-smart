@@ -195,6 +195,87 @@ def test_invalid_action_reference_is_rejected_before_private_file_access(tmp_pat
     assert not model.calls
 
 
+@pytest.mark.parametrize('box,eligible,error', [
+    ([.8, .4, .2, .6], True, ValueError),
+    ([.8, .4, .2, .6], False, ValueError),
+    (None, True, ValueError),
+    (.5, True, TypeError),
+])
+def test_later_grounding_target_is_validated_before_any_trajectory_access(
+        tmp_path, monkeypatch, box, eligible, error):
+    from pathlib import Path
+    from gui_joint_control.privacy import PrivacyLedger
+    manifest, rows = fixtures(tmp_path)
+    rows = [{**rows[0], 'trajectory_id': 'first'},
+            {**rows[0], 'trajectory_id': 'second', 'target_box': box, 'eligible': eligible}]
+    write_manifest(manifest, rows)
+    model = FakeModel()
+    evaluator = RecordedEvaluator(arguments(), model=model)
+    reads, ledger_steps = [], []
+    original_read = Path.read_bytes
+    original_step = PrivacyLedger.release_step
+    def read_bytes(path):
+        if path.name == 'feature.npy':
+            reads.append(path)
+        return original_read(path)
+    def release_step(ledger, *args, **kwargs):
+        ledger_steps.append(ledger.slot_index)
+        return original_step(ledger, *args, **kwargs)
+    monkeypatch.setattr(Path, 'read_bytes', read_bytes)
+    monkeypatch.setattr(PrivacyLedger, 'release_step', release_step)
+    output = tmp_path / 'result'
+    with pytest.raises(error):
+        evaluator.run(manifest, output=output)
+    assert reads == ledger_steps == model.calls == model.prompts == []
+    assert evaluator._trusted_input_hashes == {}
+    assert not output.exists()
+
+
+@pytest.mark.parametrize('history,eligible,error', [
+    (['valid thought', ''], True, ValueError),
+    (['valid thought', ''], False, ValueError),
+    (None, True, TypeError),
+    (['\ud800'], True, UnicodeEncodeError),
+])
+def test_later_action_history_is_validated_before_any_trajectory_access(
+        tmp_path, history, eligible, error):
+    manifest, rows = fixtures(tmp_path, 'A')
+    rows = [{**rows[0], 'trajectory_id': 'first'},
+            {**rows[0], 'trajectory_id': 'second', 'history': history, 'eligible': eligible}]
+    # Missing private files make an accidental first-trajectory read fail first.
+    for row in rows:
+        row['features_path'] = 'must-not-be-read.npy'
+    write_manifest(manifest, rows)
+    model = FakeModel()
+    evaluator = RecordedEvaluator(arguments(task='A', action_schema=str(action_schema(tmp_path))),
+                                  model=model, action_evaluator=lambda *args: pytest.fail('scored too early'))
+    output = tmp_path / 'result'
+    with pytest.raises(error):
+        evaluator.run(manifest, output=output)
+    assert not model.calls and evaluator._trusted_input_hashes == {}
+    assert not output.exists()
+
+
+@pytest.mark.parametrize('task', ['G', 'A'])
+def test_direct_runtime_validates_later_slots_before_private_access(task):
+    from gui_joint_control.action_evaluation import ActionSlot
+    from gui_joint_control.privacy import PrivacyLedger
+    from gui_joint_control.runtime import Slot, run_action_trajectory, run_trajectory
+    def unexpected(*args):
+        pytest.fail('Private access or execution preceded input validation')
+    ledger = PrivacyLedger([True, False], [True, True])
+    if task == 'G':
+        slots = [Slot('request', (.4, .4, .6, .6)), Slot('', (.8, .4, .2, .6), False)]
+        with pytest.raises(ValueError, match='Target box'):
+            run_trajectory(slots, unexpected, unexpected, unexpected, ledger=ledger)
+    else:
+        slots = [ActionSlot('request', {}), ActionSlot('', None, ('',), False)]
+        with pytest.raises(ValueError, match='Action history'):
+            run_action_trajectory(slots, unexpected, unexpected, unexpected,
+                                  evaluator=unexpected, ledger=ledger)
+    assert ledger.slot_index == 0
+
+
 def test_mandatory_prompt_overflow_precedes_private_screen_access(tmp_path):
     manifest, rows = fixtures(tmp_path)
     rows[0]["instruction"] = "x" * 5000

@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from hashlib import sha256
 import json
+import math
 import os
 from pathlib import Path
 import tempfile
@@ -43,10 +44,15 @@ def filter_budgets(proposals: torch.Tensor, remaining_budget: torch.Tensor) -> t
     if torch.any(remaining_budget < 37.5):
         raise ValueError("A nonterminal filter invocation requires at least 37.5 budget")
     detached = proposals.detach()
-    # The public ledger is float64 metadata, never an actor observation. For
-    # these 25 bounded float32 proposals their promoted sum is exactly
-    # representable in float64, matching the deployed ledger's math.fsum.
-    affordable = detached.to(torch.float64).sum(dim=-1) <= remaining_budget.to(torch.float64)
+    if detached.dtype == torch.float64:
+        # Sampled proposals need the deployed ledger's exact summation rule.
+        # Copy the batch once, not each row; this branch is nondifferentiable.
+        totals = torch.tensor([math.fsum(row) for row in detached.cpu().tolist()],
+                              dtype=torch.float64, device=detached.device)
+    else:
+        # The 25 bounded lower-precision values sum exactly in float64.
+        totals = detached.to(torch.float64).sum(dim=-1)
+    affordable = totals <= remaining_budget.to(torch.float64)
     return torch.where(affordable[:, None], detached, torch.full_like(detached, 1.5))
 
 

@@ -20,6 +20,10 @@ on supported hardware for adapter fitting and Grounding execution; `float32`
 remains available. Controller training uses float32 independently of VLM dtype.
 The supported VLM integration pins `transformers==4.57.6` and `peft==0.18.1`.
 
+Default controller settings are loaded from the installed package resource.
+The repository's `configs/naacl_reference.json` has identical bytes and remains
+available for explicit artifact bindings. CLI options require their full names.
+
 Examples use local model snapshot directories. A remote Qwen identifier requires
 an immutable 40-character commit in `--revision` and `--allow-download`; specify
 a separately pinned tokenizer revision if using a different tokenizer source.
@@ -93,6 +97,10 @@ Use either `features_path` for a trusted numeric `[25,256]` NPY file, or
 require nonempty instructions and a target box. Missing slots become structural
 padding; recorded rows with `eligible:false` become task padding. Target boxes
 enter offline correctness and reward only, never the executor or allocator.
+
+The driver validates all trajectories' slot inputs and offline references before
+reading any private screen. A malformed later target box therefore cannot leave
+an earlier trajectory partially executed without its trace.
 
 ```bash
 bbs collect-grounding --manifest data/train.jsonl --model runs/task-adapter/merged_model --tokenizer models/qwen-base --projection runs/task-adapter/projection.npy --family-id f1 --disable-retrieval --output runs/behavior --device cuda --dtype bfloat16

@@ -3,6 +3,7 @@ from pathlib import Path
 import argparse
 import hashlib
 import importlib.metadata
+from importlib.resources import files
 import json
 import platform
 import time
@@ -12,8 +13,9 @@ from dataclasses import asdict
 import numpy as np
 
 
-def load_config(path):
-    config=json.loads(Path(path).read_text(encoding='utf-8'))
+def load_config(path=None):
+    source = files('gui_joint_control').joinpath('configs/naacl_reference.json') if path is None else Path(path)
+    config=json.loads(source.read_text(encoding='utf-8'))
     from .controller import model_spec
     model_spec('H',config)
     return config
@@ -379,19 +381,18 @@ def build_tms(args):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     commands = parser.add_subparsers(dest='command', required=True)
-    config_default = str(Path(__file__).resolve().parents[2]/'configs/naacl_reference.json')
-    prepare = commands.add_parser('prepare-dataset', help='Validate supplied records and explicit trajectory splits')
+    prepare = commands.add_parser('prepare-dataset', allow_abbrev=False, help='Validate supplied records and explicit trajectory splits')
     for field in ('records','splits','output'): prepare.add_argument('--'+field, required=True)
     prepare.add_argument('--task', choices=['G','A'], required=True)
     prepare.add_argument('--action-schema')
     prepare.set_defaults(func=prepare_dataset_command)
-    summary = commands.add_parser('summarize-run', help='Validate a completed run and export aggregate metrics')
+    summary = commands.add_parser('summarize-run', allow_abbrev=False, help='Validate a completed run and export aggregate metrics')
     summary.add_argument('--run-directory', required=True); summary.add_argument('--output', required=True)
     summary.set_defaults(func=summarize_run_command)
-    train = commands.add_parser('train', help='Fit with held-out development checkpoint selection')
-    train.add_argument('--config', default=config_default); train.add_argument('--replay', required=True)
+    train = commands.add_parser('train', allow_abbrev=False, help='Fit with held-out development checkpoint selection')
+    train.add_argument('--config'); train.add_argument('--replay', required=True)
     train.add_argument('--method', choices=METHODS, default='H')
     train.add_argument('--updates', type=int, required=True); train.add_argument('--batch-size', type=int, default=256)
     train.add_argument('--device', default='cpu'); train.add_argument('--seed', type=int, default=20260916)
@@ -401,11 +402,11 @@ def main(argv=None):
     train.add_argument('--tms-schedule'); train.add_argument('--dev-tms-schedule')
     train.add_argument('--software-only', action='store_true', help='Synthetic fixture only; no selected model or benchmark claim')
     add_executor_arguments(train); train.set_defaults(func=fit)
-    check = commands.add_parser('smoke', help='Synthetic CPU checks; not a benchmark experiment')
-    check.add_argument('--config', default=config_default); check.add_argument('--output', required=True)
+    check = commands.add_parser('smoke', allow_abbrev=False, help='Synthetic CPU checks; not a benchmark experiment')
+    check.add_argument('--config'); check.add_argument('--output', required=True)
     check.add_argument('--updates', type=int, default=3); check.set_defaults(func=smoke)
     for name, task in [('collect-grounding','G'),('collect-action','A')]:
-        collection = commands.add_parser(name, help='Execute the frozen released-input recorded evaluation')
+        collection = commands.add_parser(name, allow_abbrev=False, help='Execute the frozen released-input recorded evaluation')
         collection.add_argument('--manifest', required=True); collection.add_argument('--output', required=True)
         collection.add_argument('--task', choices=[task], default=task)
         collection.add_argument('--device', default='cpu'); collection.add_argument('--seed', type=int, default=20260916)
@@ -415,22 +416,22 @@ def main(argv=None):
         collection.add_argument('--training-replay'); collection.add_argument('--controller-method', choices=METHODS, default='H')
         collection.add_argument('--tms-schedule'); collection.add_argument('--evaluation-tms-schedule')
         add_executor_arguments(collection); collection.set_defaults(func=collect)
-    align = commands.add_parser('fit-projection', help='Fit Stage 1 against saved native visual tokens')
+    align = commands.add_parser('fit-projection', allow_abbrev=False, help='Fit Stage 1 against saved native visual tokens')
     align.add_argument('--records', required=True); align.add_argument('--output', required=True)
     align.add_argument('--device', default='cpu'); align.add_argument('--seed', type=int, default=20260916)
     align.set_defaults(func=fit_projection)
-    adapter = commands.add_parser('fit-adapter', help='Stage 2 language q/v LoRA and projection teacher forcing')
+    adapter = commands.add_parser('fit-adapter', allow_abbrev=False, help='Stage 2 language q/v LoRA and projection teacher forcing')
     for field in ('model','projection','records','output'): adapter.add_argument('--'+field, required=True)
     adapter.add_argument('--revision'); adapter.add_argument('--device', default='cpu')
     adapter.add_argument('--seed', type=int, default=20260916); adapter.add_argument('--dtype', choices=['float32','bfloat16'], default='float32')
     adapter.add_argument('--allow-download', action='store_true'); adapter.add_argument('--save-merged', action='store_true')
     adapter.set_defaults(func=fit_adapter)
-    tms = commands.add_parser('build-tms', help='Bind H development means to a public target-population schedule')
+    tms = commands.add_parser('build-tms', allow_abbrev=False, help='Bind H development means to a public target-population schedule')
     for field in ('manifest','development-transcript','development-run','development-manifest','selected-h-checkpoint','family-id','public-hash-seed','population','output'):
         tms.add_argument('--'+field, required=True)
     tms.add_argument('--task', choices=['G','A'], required=True); tms.set_defaults(func=build_tms)
     tms.add_argument('--selection-state', help='Defaults to selection.json beside the selected H checkpoint')
-    protocol = commands.add_parser('protocol', help='Validate and plan explicit 10-family/3-repeat runs; does not execute by default')
+    protocol = commands.add_parser('protocol', allow_abbrev=False, help='Validate and plan explicit 10-family/3-repeat runs; does not execute by default')
     protocol.add_argument('--registry', required=True); protocol.add_argument('--output-root', required=True)
     protocol.add_argument('--plan-output'); protocol.add_argument('--execute', action='store_true')
     protocol.set_defaults(func=protocol_command)

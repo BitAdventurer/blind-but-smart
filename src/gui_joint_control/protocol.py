@@ -38,6 +38,16 @@ EXECUTOR_FLAGS = {"--dtype", "--device", "--tokenizer", "--tokenizer-revision", 
                   "--retrieval-threshold", "--retrieval-view", "--action-evaluator", "--disable-retrieval"}
 EXECUTOR_ARTIFACTS = {"--public-projection", "--action-schema", "--retrieval-bank", "--retrieval-keys", "--retrieval-exclusion-manifest"}
 SCHEDULE_FLAGS = {"--tms-schedule", "--dev-tms-schedule", "--evaluation-tms-schedule"}
+COMMON_COMMAND_FLAGS = EXECUTOR_FLAGS | EXECUTOR_ARTIFACTS | {
+    "--model", "--revision", "--projection", "--family-id", "--task", "--seed", "--output", "--allow-download"}
+TRAIN_COMMAND_FLAGS = COMMON_COMMAND_FLAGS | {
+    "--config", "--replay", "--method", "--updates", "--batch-size", "--resume", "--run-id",
+    "--dev-manifest", "--dev-replicates", "--tms-schedule", "--dev-tms-schedule", "--software-only"}
+COLLECTION_COMMAND_FLAGS = COMMON_COMMAND_FLAGS | {
+    "--manifest", "--replicate-id", "--split", "--controller-checkpoint", "--controller-config",
+    "--training-replay", "--controller-method", "--tms-schedule", "--evaluation-tms-schedule"}
+COMMAND_FLAGS = {"train": TRAIN_COMMAND_FLAGS, "collect-grounding": COLLECTION_COMMAND_FLAGS,
+                 "collect-action": COLLECTION_COMMAND_FLAGS}
 
 
 def artifact_digest(path: str | Path) -> str:
@@ -107,6 +117,8 @@ def _command(argv, expected_command: str) -> tuple[list[str], dict[str, str | bo
         flag = argv[index]
         if not flag.startswith("--") or flag in flags or "=" in flag:
             raise ValueError("Use unique explicit --flag value pairs in protocol commands")
+        if flag not in COMMAND_FLAGS[expected_command]:
+            raise ValueError(f"Unknown protocol option for {expected_command}: {flag}; use exact option names")
         if flag in ("--allow-download", "--disable-retrieval", "--software-only"):
             flags[flag] = True
             index += 1

@@ -160,6 +160,7 @@ has already executed a future H fit or produced its development measurements.
 
 Each command must start with `bbs` or `python -m gui_joint_control.cli`; shell
 command strings and duplicate flags are rejected. The planner checks exact
+option names and rejects abbreviated or unrecognized flags. It checks
 method, updates, replay, configuration, development/final manifest, frozen
 executor, TMS schedules, family, task, seed and output bindings. Fitting uses
 1,000,000 updates per component except baseline Independent's 500,000, and batch

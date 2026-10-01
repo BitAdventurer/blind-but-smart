@@ -1,0 +1,176 @@
+{
+  "schema_version": 2,
+  "profile": "current_manuscript_2026_09_24",
+  "purpose": "Current author-specified manuscript implementation; not recovered historical checkpoints or independently reproduced results",
+  "reproduces_reported_results": false,
+  "source_policy": {
+    "retained_contract": "Current manuscript Appendix B.7, reference/controller_config.json: architecture, AdamW, initialization, update order, parameter counts and Gumbel index",
+    "confirmed_historical_settings": [
+      "controller AdamW",
+      "learning rate 3e-4",
+      "betas 0.9/0.999",
+      "epsilon 1e-8",
+      "weight decay 0.0"
+    ],
+    "author_specified_settings": [
+      "H/CB/standalone width 256; Independent width 170",
+      "hidden Kaiming-uniform ReLU; output Xavier-uniform; zero biases",
+      "critic then actor then Polyak",
+      "zero-based Gumbel schedule"
+    ],
+    "prospective_reimplementation_choices": [
+      "constant controller learning rate",
+      "float32 controller, float64 log density",
+      "log standard deviation clamp [-5,2]",
+      "prompt cap scope, overflow and history provenance",
+      "public stream bindings and artifact schema"
+    ],
+    "result_policy": "Parameter totals are structure-derived. Accuracy and timing require new run IDs and fresh evaluation; matching this specification does not recover historical runs."
+  },
+  "reference_controller": {
+    "observation_dim": 28,
+    "regions": 25,
+    "count_classes": 20,
+    "critic_input_dim": 73,
+    "hidden_sizes": [
+      256,
+      256
+    ],
+    "activation": "relu",
+    "encoder": "identity",
+    "initialization": "hidden Kaiming-uniform ReLU; output Xavier-uniform; zero biases",
+    "log_std_bounds": [
+      -5.0,
+      2.0
+    ],
+    "dtype": "float32",
+    "optimizer": {
+      "name": "AdamW",
+      "lr": 0.0003,
+      "betas": [
+        0.9,
+        0.999
+      ],
+      "eps": 1e-08,
+      "weight_decay": 0.0
+    },
+    "gamma_H": 0.99,
+    "gamma_CB": 0.0,
+    "polyak_tau": 0.005,
+    "gradient_clip_l2": 1.0,
+    "entropy_coefficients": [
+      0.2,
+      0.2
+    ],
+    "gumbel": {
+      "schedule": "linear_then_constant",
+      "start": 1.0,
+      "end": 0.1,
+      "first_update": 0,
+      "last_anneal_update": 500000
+    },
+    "update_order": [
+      "one joint twin-critic optimizer step",
+      "one actor optimizer step with critics frozen",
+      "one Polyak update of both targets"
+    ],
+    "target_initialization": "exact frozen copy of online critics",
+    "target_update_formula": "target = (1-tau)*target + tau*online",
+    "actor_gradients": "continuous score-function critic gradient and reparameterized entropy; categorical straight-through Gumbel; see trainer.py and docs/NAACL_RUNTIME.md",
+    "budget_range": [
+      1.5,
+      5.0
+    ],
+    "evaluation": "tanh(mean) affine mapped to budget range; smallest categorical argmax + 1",
+    "independent_hidden_sizes": [
+      170,
+      170
+    ],
+    "log_density_dtype": "float64"
+  },
+  "training": {
+    "public_initialization_seed": 20260916,
+    "families": 10,
+    "evaluation_replicates": 3,
+    "replay_batch_size": 256,
+    "replay_capacity": 1000000,
+    "sampling": {
+      "success_probability": 0.7,
+      "failure_probability": 0.3,
+      "within_stratum": "uniform with replacement",
+      "empty_stratum": "abort run",
+      "capacity_overflow": "abort run"
+    },
+    "buffer": "one immutable task/family behavior buffer shared across methods; no on-policy additions",
+    "iterations": {
+      "H": [
+        1000000
+      ],
+      "CB": [
+        1000000
+      ],
+      "Independent": [
+        500000,
+        500000
+      ],
+      "Independent-1M": [
+        1000000,
+        1000000
+      ],
+      "Disclosure-only": [
+        1000000
+      ],
+      "Count-only": [
+        1000000
+      ]
+    },
+    "independent": "Separate 170-wide role-specific actors and critics; absent opposite heads; separate TMS counterparts during fitting; combine learned heads only after selection, without joint fine-tuning.",
+    "development_interval": 10000,
+    "checkpoint_selection": "maximum eligible discounted return, then lower eligible budget, lower eligible candidate count, earlier update",
+    "resume": "weights, targets, optimizer states, sampler state, RNG states and iteration counter required; otherwise start a new run",
+    "tms_binding": "Required development-derived task/family schedule artifact, complete eligible population stable slot IDs, public 256-bit hash seed, development means and source hashes. No fixed 3/5 fallback."
+  },
+  "prompt": {
+    "input_token_limit": 4096,
+    "cap_scope": "all final model-input token IDs including wrapper, visual placeholders, retrieval, history, current instruction and generation prefix",
+    "action_history_source": "preceding reference-record thoughts only; no current/future target action or generated thought",
+    "max_previous_steps": 10,
+    "history_order": "chronological, latest last",
+    "scoring_text": "G: current thought; A: request followed by retained thoughts, joined by newline, without whitespace normalization",
+    "overflow_order": [
+      "remove oldest history entry",
+      "remove lowest-scored retrieval entry, last entry on a tie",
+      "abort run"
+    ],
+    "current_instruction_policy": "never truncate",
+    "empty_scoring_span": "abort run",
+    "render_contract": "Tokenize the complete final model prompt after each removal; store exact token IDs, UTF-8 scoring span and its embedding-token IDs."
+  },
+  "decoding": {
+    "temperature": 0.7,
+    "top_p": 0.9,
+    "top_k": 0,
+    "num_beams": 1,
+    "max_new_tokens": {
+      "G": 32,
+      "A": 128
+    }
+  },
+  "relevance": {
+    "dtype": "float64",
+    "norm_floor": 1e-12,
+    "formula": "1-sum((unit(v)-unit(e))**2)/2",
+    "grounding_weights": "exp(mean_logp)*r**2",
+    "clip_score": false
+  },
+  "required_run_bindings": {
+    "run_id": null,
+    "model_and_tokenizer_immutable_revisions": null,
+    "fitted_executor_and_projection_checkpoint_hashes": null,
+    "prompt_renderer_and_action_parser_code_hashes": null,
+    "dataset_split_eligible_manifest_and_replay_hashes": null,
+    "runtime_versions_gpu_and_precision": null,
+    "family_task_seed_and_component_checkpoint_registry": null,
+    "task_family_tms_schedule_and_population_hashes": null
+  }
+}

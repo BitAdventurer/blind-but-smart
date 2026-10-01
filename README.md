@@ -62,6 +62,8 @@ bbs smoke --output runs/software-smoke --updates 3
 
 Smoke uses synthetic data and three CPU controller updates. It downloads no model weights and produces no benchmark score. Use a new output directory. VLM integration pins Transformers 4.57.6 and PEFT 0.18.1. Tiny Qwen tests instantiate small random models only as software fixtures.
 
+The default controller configuration is included in installed packages, including wheels. Use full option names; abbreviated options are rejected. The repository's `configs/naacl_reference.json` remains available for explicit `--config` bindings.
+
 ## Current controller specification
 
 | Setting | Value |

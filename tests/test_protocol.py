@@ -137,6 +137,25 @@ class ProtocolTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "does not match"):
                     build_plan(changed, root / "plan")
 
+    def test_commands_reject_abbreviated_unknown_and_wrong_command_options(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            registry = registry_fixture(root)
+            for key, flag, value in (
+                ("fit", "--see", "999"), ("fit", "--meth", "CB"),
+                ("fit", "--out", str(root / "other")), ("fit", "--res", str(root / "last.pt")),
+                ("fit", "--unknown-option", "value"), ("fit", "--evaluation-tms-schedule", "other.json"),
+                ("evaluation", "--see", "999"), ("evaluation", "--controller-check", str(root / "last.pt")),
+                ("evaluation", "--dev-manifest", "other.json"),
+            ):
+                with self.subTest(key=key, flag=flag):
+                    changed = copy.deepcopy(registry)
+                    method = changed["families"][0]["tasks"][0]["methods"][0]
+                    argv = method["fit_argv"] if key == "fit" else method["evaluations"][0]["argv"]
+                    argv.extend([flag, value])
+                    with self.assertRaisesRegex(ValueError, "Unknown protocol option"):
+                        build_plan(changed, root / "plan")
+
     def test_family_roots_replicate_count_and_pairing_are_not_inferred(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

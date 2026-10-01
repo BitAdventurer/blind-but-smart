@@ -234,7 +234,7 @@ class RecordedEvaluator:
 
     def run(self, manifest, *, trainer=None, replicate='1', output=None, tms_schedule=None, split=None):
         from .runtime import (Slot, Prediction, TrajectoryExecutionError, behavior_allocator, run_trajectory,
-                              run_action_trajectory, save_replay)
+                              run_action_trajectory, save_replay, validate_grounding_slots, validate_action_slots)
         from .action_evaluation import ActionSlot, ActionPrediction
         from .prompt_policy import prepare_prompt
         from .features import DinoRegionalEncoder
@@ -260,19 +260,44 @@ class RecordedEvaluator:
             validate_tms_population(tms_schedule, manifest, task=self.task, family=self.args.family_id)
         population_binding = {'retrieval_exclusion_manifest_sha256': file_hash(exclusion) if self.bank else None,
                               'manifest_split': split_binding}
-        # Validate public mandatory text and offline reference schema before any
-        # screen access. Full prompts are rechecked after release-only retrieval.
-        for group in groups.values():
-            for row in group.values():
-                if not row.get('eligible', True):
+        # Validate the entire population before any screen access, including
+        # supplied labels/history on ineligible rows. Reuse these exact slots.
+        if self.task == 'A' and not callable(self.action_evaluator):
+            raise TypeError('An explicitly bound offline Action evaluator is required')
+        trajectory_slots = {}
+        for trajectory, group in groups.items():
+            slots = []
+            for index in range(max(group) + 1):
+                row = group.get(index)
+                if self.task == 'G':
+                    slots.append(Slot('', None, False, False) if row is None else Slot(
+                        row.get('instruction', ''), tuple(row['target_box']) if row.get('target_box') is not None else None,
+                        row.get('eligible', True), True))
+                else:
+                    history = tuple(row.get('history', ())) if row else ()
+                    slots.append(ActionSlot('', None, (), False, False) if row is None else ActionSlot(
+                        row.get('request', row.get('instruction', '')), row.get('reference_action'), history,
+                        row.get('eligible', True), True,
+                        tuple(row['screen_size']) if row.get('screen_size') else None,
+                        row.get('reference_boxes')))
+            if self.task == 'G':
+                validate_grounding_slots(slots)
+            else:
+                validate_action_slots(slots)
+            trajectory_slots[trajectory] = slots
+        # Full prompts are rechecked after release-only retrieval.
+        for slots in trajectory_slots.values():
+            for slot in slots:
+                if not slot.eligible:
                     continue
-                current = row.get('instruction', '') if self.task == 'G' else row.get('request', row.get('instruction', ''))
-                prepared = prepare_prompt(self.task, current, (), (), lambda payload:
+                current = slot.instruction if self.task == 'G' else slot.request
+                history = () if self.task == 'G' else slot.history
+                prepared = prepare_prompt(self.task, current, history, (), lambda payload:
                     self.model.prompt_token_ids(render_prompt(payload, action_schema_text=self.action_schema_text)).reshape(-1).tolist())
                 self.model.instruction_embeddings(prepared.payload.scoring_text)
                 if self.task == 'A':
                     from .scoring import parse_action
-                    reference = row.get('reference_action')
+                    reference = slot.reference_action
                     if reference is None or parse_action(json.dumps(reference, ensure_ascii=False, allow_nan=False), self.schemas) != reference:
                         raise ValueError('Eligible Action references must already be canonical under the frozen schema')
         if self.encoder is None and any('image_path' in r and 'features_path' not in r
@@ -306,20 +331,7 @@ class RecordedEvaluator:
         behavior = behavior_allocator(np.random.default_rng(self.args.seed))
         for trajectory, group in sorted(groups.items()):
             active = {}
-            slots = []
-            for index in range(max(group) + 1):
-                row = group.get(index)
-                if self.task == 'G':
-                    slots.append(Slot('', None, False, False) if row is None else Slot(
-                        row.get('instruction', ''), tuple(row['target_box']) if row.get('target_box') is not None else None,
-                        row.get('eligible', True), True))
-                else:
-                    history = tuple(row.get('history', ())) if row else ()
-                    slots.append(ActionSlot('', None, (), False, False) if row is None else ActionSlot(
-                        row.get('request', row.get('instruction', '')), row.get('reference_action'), history,
-                        row.get('eligible', True), True,
-                        tuple(row['screen_size']) if row.get('screen_size') else None,
-                        row.get('reference_boxes')))
+            slots = trajectory_slots[trajectory]
 
             def load_features(index):
                 active['slot'] = index

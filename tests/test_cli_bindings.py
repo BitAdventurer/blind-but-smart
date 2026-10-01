@@ -9,6 +9,45 @@ from gui_joint_control.evaluation import assert_disjoint_manifests, file_hash, s
 from gui_joint_control.tms import TMSSchedule
 
 
+@pytest.mark.parametrize('flag,value', [('--see','999'), ('--meth','CB'),
+                                      ('--out','elsewhere'), ('--res','last.pt')])
+def test_training_cli_rejects_abbreviated_binding_overrides(monkeypatch, capsys, flag, value):
+    from gui_joint_control import cli
+    dispatched = []
+    monkeypatch.setattr(cli, 'fit', dispatched.append)
+    argv = ['train','--replay','replay.npz','--updates','1','--family-id','f1',
+            '--seed','100','--method','H','--output','registered-output']
+    with pytest.raises(SystemExit) as error:
+        cli.main(argv + [flag,value])
+    assert error.value.code == 2
+    assert 'unrecognized arguments' in capsys.readouterr().err
+    assert not dispatched
+
+
+@pytest.mark.parametrize('handler,argv,abbreviation', [
+    ('prepare_dataset_command', ['prepare-dataset','--records','r','--splits','s','--task','G','--output','o'], '--out'),
+    ('summarize_run_command', ['summarize-run','--run-directory','r','--output','o'], '--out'),
+    ('smoke', ['smoke','--output','o'], '--out'),
+    ('collect', ['collect-grounding','--manifest','m','--family-id','f','--output','o'], '--out'),
+    ('collect', ['collect-action','--manifest','m','--family-id','f','--output','o'], '--out'),
+    ('fit_projection', ['fit-projection','--records','r','--output','o'], '--out'),
+    ('fit_adapter', ['fit-adapter','--model','m','--projection','p','--records','r','--output','o'], '--out'),
+    ('build_tms', ['build-tms','--manifest','m','--development-transcript','t','--development-run','r',
+                   '--development-manifest','d','--selected-h-checkpoint','h','--family-id','f',
+                   '--public-hash-seed','s','--population','test','--task','G','--output','o'], '--out'),
+    ('protocol_command', ['protocol','--registry','r','--output-root','o'], '--output-r'),
+])
+def test_other_cli_commands_reject_abbreviated_options(monkeypatch, capsys, handler, argv, abbreviation):
+    from gui_joint_control import cli
+    dispatched = []
+    monkeypatch.setattr(cli, handler, dispatched.append)
+    with pytest.raises(SystemExit) as error:
+        cli.main(argv + [abbreviation,'elsewhere'])
+    assert error.value.code == 2
+    assert 'unrecognized arguments' in capsys.readouterr().err
+    assert not dispatched
+
+
 def test_split_guard_rejects_same_trajectory_different_slot(tmp_path):
     path = tmp_path/'dev.jsonl'
     path.write_text(json.dumps({'trajectory_id':'shared','slot':1})+'\n', encoding='utf-8')

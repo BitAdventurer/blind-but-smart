@@ -47,6 +47,32 @@ def correct_grounding(point, box) -> bool:
     return bool(math.isfinite(x) and math.isfinite(y) and box[0] <= x <= box[2] and box[1] <= y <= box[3])
 
 
+def validate_grounding_slots(slots: list[Slot]):
+    """Validate public Grounding inputs and offline targets before screen access."""
+    if not 1 <= len(slots) <= 56:
+        raise ValueError("One to 56 recorded slots are required")
+    for slot in slots:
+        if slot.eligible and (not slot.recorded or not slot.instruction or slot.target_box is None):
+            raise ValueError("Eligible slots require public text, a recorded screen and an offline target")
+        if slot.target_box is not None:
+            box = slot.target_box
+            if len(box) != 4 or not all(math.isfinite(x) and 0 <= x <= 1 for x in box) or box[0] > box[2] or box[1] > box[3]:
+                raise ValueError("Target box must be ordered normalized coordinates")
+
+
+def validate_action_slots(slots: list[ActionSlot]):
+    """Validate public Action inputs and offline reference presence before access."""
+    if not 1 <= len(slots) <= 56:
+        raise ValueError("One to 56 recorded slots are required")
+    for slot in slots:
+        if not isinstance(slot, ActionSlot):
+            raise TypeError("Action trajectories require ActionSlot")
+        if slot.eligible and (not slot.recorded or not slot.request or slot.reference_action is None):
+            raise ValueError("Eligible Action slots require request, recorded screen and offline reference")
+        if any(not isinstance(text, str) or not text for text in slot.history):
+            raise ValueError("Action history must contain dataset-recorded thought strings")
+
+
 def run_trajectory(slots: list[Slot], feature_loader: Callable,
                    allocator: Callable, executor: Callable, *, ledger=None, executor_context=False):
     """Return local evaluation records and trusted replay for one trajectory.
@@ -58,15 +84,7 @@ Callbacks: feature_loader(zero_based_slot)->clean25x256; allocator(obs28)->
 (budgets25,k); executor(release25x256, instruction,k)->Prediction. Executor never
 receives target boxes, probes, the original image or controller observation.
 """
-    if not 1 <= len(slots) <= 56:
-        raise ValueError("One to 56 recorded slots are required")
-    for slot in slots:
-        if slot.eligible and (not slot.recorded or not slot.instruction or slot.target_box is None):
-            raise ValueError("Eligible slots require public text, a recorded screen and an offline target")
-        if slot.target_box is not None:
-            box = slot.target_box
-            if len(box) != 4 or not all(math.isfinite(x) and 0 <= x <= 1 for x in box) or box[0] > box[2] or box[1] > box[3]:
-                raise ValueError("Target box must be ordered normalized coordinates")
+    validate_grounding_slots(slots)
     def execute(release, slot, k, previous_feedback):
         return (executor(release, slot.instruction, (), k, previous_feedback) if executor_context
                 else executor(release, slot.instruction, k))
@@ -91,15 +109,7 @@ def run_action_trajectory(slots: list[ActionSlot], feature_loader: Callable,
     """
     if not callable(evaluator):
         raise TypeError("An explicitly bound offline Action evaluator is required")
-    if not 1 <= len(slots) <= 56:
-        raise ValueError("One to 56 recorded slots are required")
-    for slot in slots:
-        if not isinstance(slot, ActionSlot):
-            raise TypeError("Action trajectories require ActionSlot")
-        if slot.eligible and (not slot.recorded or not slot.request or slot.reference_action is None):
-            raise ValueError("Eligible Action slots require request, recorded screen and offline reference")
-        if any(not isinstance(text, str) or not text for text in slot.history):
-            raise ValueError("Action history must contain dataset-recorded thought strings")
+    validate_action_slots(slots)
 
     def execute(release, slot, k, previous_feedback):
         return executor(release, slot.request, slot.history, k, previous_feedback)
