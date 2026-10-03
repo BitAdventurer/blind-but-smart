@@ -1,5 +1,10 @@
 # Explicit local dataset preparation
 
+For public downloads and upstream conversion, first use the
+[dataset adapters](upstream-data.md). Their `records.jsonl` and `splits.json`
+feed this command. Use [training-input preparation](training-inputs.md) next
+for projection and adapter fitting.
+
 `bbs prepare-dataset` prepares caller-supplied normalized JSONL records for the
 recorded Grounding or Action driver. It does not download datasets, interpret an
 unknown upstream benchmark format, infer the manuscript's historical split, or
@@ -104,6 +109,9 @@ Image/feature paths resolve relative to the source JSONL's directory and are
 rebased relative to the output directory. Eligible assets must exist as local
 files. Preparation does not decode assets, inspect feature-array shape, or hash
 their private contents. The runtime validates/loads them on admitted execution.
+
+Optional `native_target_tokens_path` for later alignment preparation is also
+validated and rebased. It is a trusted training artifact, not an executor input.
 
 Each trajectory exceeding 56 recorded slots, or containing an index beyond 55,
 is excluded in its entirety. It is never truncated or split into smaller

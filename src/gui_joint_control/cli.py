@@ -196,7 +196,9 @@ def manifest_rows(path, task='G'):
 
 def fit_projection(args):
     from .fitting import initialize_projection,Stage1Trainer,AlignmentExample
+    from .training_data import verify_prepared_inputs
     if Path(args.output).exists():raise FileExistsError(args.output)
+    prepared_binding = verify_prepared_inputs(args.records, stage=1)
     with np.load(args.records,allow_pickle=False) as archive:
         features=archive['features'];targets=archive['native_target_tokens']
     if features.ndim!=3 or features.shape[1:]!=(25,256) or targets.ndim!=3 or targets.shape[:2]!=features.shape[:2]:
@@ -205,7 +207,8 @@ def fit_projection(args):
     trainer=Stage1Trainer(projection,seed=args.seed)
     records=[AlignmentExample(str(i),feature,target) for i,(feature,target) in enumerate(zip(features,targets))]
     history=trainer.fit(records)
-    trainer.save(args.output,provenance={'records_sha256':hashlib.sha256(Path(args.records).read_bytes()).hexdigest(),'kind':'new_alignment_fit'})
+    trainer.save(args.output,provenance={'records_sha256':hashlib.sha256(Path(args.records).read_bytes()).hexdigest(),
+                                       'prepared_input_binding':prepared_binding,'kind':'new_alignment_fit'})
     write_json(Path(args.output)/'losses.json',history)
     print(json.dumps({'output':args.output,'screens':len(records),'epochs':2,'historical_result_reproduced':False}))
 
@@ -214,7 +217,9 @@ def fit_adapter(args):
     import torch
     from .executor import released_qwen_class,_immutable_model_ref
     from .fitting import initialize_projection,Stage2Trainer,TeacherForcedExample
+    from .training_data import verify_prepared_inputs
     if Path(args.output).exists():raise FileExistsError(args.output)
+    prepared_binding = verify_prepared_inputs(args.records, stage=2)
     _immutable_model_ref(args.model,args.revision)
     native=released_qwen_class().from_pretrained(args.model,revision=args.revision,local_files_only=not args.allow_download,
         trust_remote_code=False,torch_dtype=getattr(torch,args.dtype)).to(args.device)
@@ -231,6 +236,7 @@ def fit_adapter(args):
     trainer=Stage2Trainer(native,projection,seed=args.seed)
     history=trainer.fit(records)
     trainer.save(args.output,provenance={'records_sha256':hashlib.sha256(Path(args.records).read_bytes()).hexdigest(),
+        'prepared_input_binding':prepared_binding,
         'base_model':args.model,'revision':args.revision,'dtype':args.dtype,'kind':'new_task_adapter_fit'})
     write_json(Path(args.output)/'losses.json',history)
     if args.save_merged:
@@ -285,7 +291,7 @@ def collect(args):
     print(json.dumps(report, indent=2))
 
 
-METHODS = ['H','CB','Independent','Independent-1M','Disclosure-only','Count-only']
+METHODS = ['H','H-ActorTMS','CB','Independent','Independent-1M','Disclosure-only','Count-only']
 
 
 def add_executor_arguments(parser):
@@ -380,9 +386,107 @@ def build_tms(args):
     write_json(args.output, schedule.to_dict())
 
 
+def download_dataset_command(args):
+    from .dataset_sources import download_dataset
+    report = download_dataset(args.dataset, args.revision, args.output, include=args.include)
+    print(json.dumps(report, indent=2))
+
+
+def extract_images_command(args):
+    from .dataset_sources import extract_images
+    print(json.dumps(extract_images(args.archive, args.output), indent=2))
+
+
+def convert_screenspot_command(args):
+    from .dataset_sources import convert_screenspot
+    print(json.dumps(convert_screenspot(args.annotations, args.images, args.output), indent=2))
+
+
+def convert_gui360_command(args):
+    from .dataset_sources import convert_gui360
+    print(json.dumps(convert_gui360(args.root, args.output, task=args.task, role=args.role,
+                                   action_schema=args.action_schema, action_map=args.action_map), indent=2))
+
+
+def _training_input_bindings(args):
+    from .evaluation import artifact_binding, file_hash
+    if Path(args.output).exists():
+        raise FileExistsError(args.output)
+    bindings = {'kind': 'new-reference-training-input-preparation',
+                'runtime': versions(device=args.device, dtype=args.dtype)}
+    for field in ('model', 'tokenizer', 'dino_model'):
+        revision = 'revision' if field == 'model' else field + '_revision'
+        bindings[field] = artifact_binding(getattr(args, field, None), getattr(args, revision, None))
+    encoder = None
+    if args.dino_model:
+        if not args.public_projection:
+            raise ValueError('--dino-model requires the saved --public-projection')
+        from .features import DinoRegionalEncoder
+        encoder = DinoRegionalEncoder.from_pretrained(args.dino_model, args.dino_revision,
+            args.public_projection, args.device, local_files_only=not args.allow_download)
+        bindings['public_projection_sha256'] = file_hash(args.public_projection)
+    elif args.public_projection:
+        raise ValueError('--public-projection requires --dino-model')
+    return bindings, encoder
+
+
+def prepare_alignment_command(args):
+    from .training_data import QwenNativeTargetEncoder, build_alignment_data
+    bindings, encoder = _training_input_bindings(args)
+    native = None
+    if args.model:
+        native = QwenNativeTargetEncoder.from_pretrained(args.model, args.revision, device=args.device,
+            dtype=args.dtype, local_files_only=not args.allow_download)
+    report = build_alignment_data(args.manifest, args.output, feature_encoder=encoder,
+                                  native_encoder=native, provenance=bindings)
+    print(json.dumps({'output': args.output, 'eligible_records': report['eligible_records'], 'stage': 1}))
+
+
+def prepare_supervised_command(args):
+    from .training_data import load_training_tokenizer, build_supervised_data
+    bindings, encoder = _training_input_bindings(args)
+    tokenizer = load_training_tokenizer(args.tokenizer, args.tokenizer_revision,
+                                       local_files_only=not args.allow_download)
+    report = build_supervised_data(args.manifest, args.output, task=args.task, tokenizer=tokenizer,
+        eos_token_id=args.eos_token_id, feature_encoder=encoder, provenance=bindings, action_schema=args.action_schema)
+    print(json.dumps({'output': args.output, 'eligible_records': report['eligible_records'], 'stage': 2}))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
     commands = parser.add_subparsers(dest='command', required=True)
+    download = commands.add_parser('download-dataset', allow_abbrev=False, help='Download explicitly selected official dataset files at a pinned revision')
+    download.add_argument('--dataset', choices=['screenspot-v2','gui360'], required=True)
+    download.add_argument('--revision', required=True); download.add_argument('--output', required=True)
+    download.add_argument('--include', action='append', help='Repeat for each file pattern; required for GUI-360')
+    download.set_defaults(func=download_dataset_command)
+    extract = commands.add_parser('extract-images', allow_abbrev=False, help='Validate and extract an image ZIP into a new directory')
+    extract.add_argument('--archive', required=True); extract.add_argument('--output', required=True)
+    extract.set_defaults(func=extract_images_command)
+    screenspot = commands.add_parser('convert-screenspot', allow_abbrev=False, help='Convert original ScreenSpot-v2 annotations to evaluation records')
+    screenspot.add_argument('--annotations', nargs='+', required=True)
+    screenspot.add_argument('--images', required=True); screenspot.add_argument('--output', required=True)
+    screenspot.set_defaults(func=convert_screenspot_command)
+    gui360 = commands.add_parser('convert-gui360', allow_abbrev=False, help='Convert GUI-360 raw trajectories using explicit role and Action mappings')
+    gui360.add_argument('--root', required=True); gui360.add_argument('--output', required=True)
+    gui360.add_argument('--task', choices=['G','A'], required=True)
+    gui360.add_argument('--role', choices=['train','dev','test'], required=True)
+    gui360.add_argument('--action-schema'); gui360.add_argument('--action-map')
+    gui360.set_defaults(func=convert_gui360_command)
+    for command, handler in [('prepare-alignment', prepare_alignment_command), ('prepare-supervised', prepare_supervised_command)]:
+        training = commands.add_parser(command, allow_abbrev=False, help='Build trusted fit-train inputs with explicit model bindings')
+        training.add_argument('--manifest', required=True); training.add_argument('--output', required=True)
+        training.add_argument('--dino-model'); training.add_argument('--dino-revision')
+        training.add_argument('--public-projection'); training.add_argument('--device', default='cpu')
+        training.add_argument('--dtype', choices=['float32','bfloat16'], default='float32')
+        training.add_argument('--allow-download', action='store_true')
+        if command == 'prepare-alignment':
+            training.add_argument('--model'); training.add_argument('--revision')
+        else:
+            training.add_argument('--tokenizer', required=True); training.add_argument('--tokenizer-revision')
+            training.add_argument('--task', choices=['G','A'], required=True)
+            training.add_argument('--eos-token-id', type=int); training.add_argument('--action-schema')
+        training.set_defaults(func=handler)
     prepare = commands.add_parser('prepare-dataset', allow_abbrev=False, help='Validate supplied records and explicit trajectory splits')
     for field in ('records','splits','output'): prepare.add_argument('--'+field, required=True)
     prepare.add_argument('--task', choices=['G','A'], required=True)

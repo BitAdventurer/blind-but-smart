@@ -18,19 +18,25 @@ The [published-aggregate companion](paper_aggregates/analysis/README.md) checks
 the supplied C.6, C.7, D.6 and F.5 table arithmetic with Python's standard library.
 
 - Projection alignment and task-specific language q/v LoRA fitting.
-- H, CB, Disclosure-only, Count-only, Independent and Independent-1M controllers.
+- H, H-ActorTMS, CB, Disclosure-only, Count-only, Independent and Independent-1M controllers.
 - Immutable replay, explicit development-derived TMS schedules, resumable optimizer/RNG checkpoints.
 - Development selection every 10,000 iterations, with separate selected and last states.
 - Released-input Grounding and Action execution; Action requires a supplied frozen schema and pinned evaluator.
 - Frozen Train-only retrieval, global public exclusion views and release-only queries.
 - Explicit ten-family controller plans and three evaluations per fitted checkpoint.
 - Validated dataset preparation from supplied records and trajectory split assignments.
+- Pinned official downloads and raw GUI-360/ScreenSpot-v2 conversion.
+- Fit-train input generation for projection alignment and teacher-forced adapters.
 - Transcript-verified run summaries with explicit metric denominators and runtime bindings.
 - Failure traces preserving completed disclosure and explicit retained prompt-source identifiers.
 
 Read the [runtime guide](docs/NAACL_RUNTIME.md), [Action and retrieval schemas](docs/action-retrieval.md), [family protocol](docs/MANUSCRIPT_PROTOCOL.md), and [alignment notes](docs/MANUSCRIPT_ALIGNMENT.md).
 
 ## Prepare inputs and export results
+
+Start with [official downloads and conversion](docs/upstream-data.md), then
+[projection/adapter input generation](docs/training-inputs.md). GUI-360 downloads
+require explicit file patterns. ScreenSpot remains evaluation-only.
 
 The [dataset preparation guide](docs/dataset-preparation.md) defines normalized
 Grounding/Action records and an explicit `train`/`dev`/`test` trajectory assignment.
@@ -54,7 +60,7 @@ Use new output paths for both commands.
 Use Python 3.11+ (CI uses 3.12), create a virtual environment, and install an appropriate CPU/CUDA PyTorch build. Then:
 
 ```bash
-python -m pip install -e ".[vlm,test]"
+python -m pip install -e ".[data,vlm,test]"
 bbs --help
 python -m pytest tests -q
 bbs smoke --output runs/software-smoke --updates 3
@@ -82,7 +88,7 @@ The default controller configuration is included in installed packages, includin
 
 | Controller | Online | Targets | Total stored |
 |---|---:|---:|---:|
-| H / CB | 261,192 | 169,986 | 431,178 |
+| H / H-ActorTMS / CB | 261,192 | 169,986 | 431,178 |
 | Independent, both components | 247,254 | 167,284 | 414,538 |
 
 Counts exclude frozen vision/language models and projection. Independent is not exactly capacity- or compute-matched to H. The old 128-wide/Adam profile and version1 checkpoints are rejected rather than silently relabeled.
@@ -108,6 +114,12 @@ bbs collect-grounding --manifest data/test.jsonl --model models/fitted-G --token
 These are examples, not commands run by installation. For VLM execution on suitable hardware add `--device cuda --dtype bfloat16`. The author reports one RTX 5090 for the paper; CPU software checks do not establish performance or memory use on that GPU.
 
 Independent uses 500k additional iterations per component (1M aggregate); Independent-1M uses 1M per component (2M aggregate). Both require a training TMS artifact derived from the paired selected H development trace. Standalone methods also need population-specific development and evaluation TMS schedules.
+
+H-ActorTMS retains H's architecture, joint critic/target and joint evaluation.
+Each head's actor improvement uses the other head's fixed TMS setting. Supply
+`--tms-schedule` for training and checkpoint loading. The
+[matched-pair protocol](docs/MANUSCRIPT_PROTOCOL.md#h--h-actortms-matched-reruns)
+pairs initialization and replay sampling in new reruns.
 
 ## Outputs and scope
 

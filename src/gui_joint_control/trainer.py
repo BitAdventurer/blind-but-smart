@@ -122,16 +122,19 @@ class Trainer:
             raise ValueError("training.fixed_complement is obsolete; bind a development-derived TMS artifact")
         if tms_schedule is not None:
             self._validate_schedule(tms_schedule)
-        if any(bundle["actor"].role != "joint" for bundle in self.bundles.values()):
+        single_head = any(bundle["actor"].role != "joint" for bundle in self.bundles.values())
+        if single_head or method == "H-ActorTMS":
             if tms_schedule is None:
-                raise ValueError("Single-head fitting requires an explicit TMS schedule artifact")
-            for field in ("slot_id", "next_slot_id"):
+                raise ValueError(f"{method} fitting requires an explicit TMS schedule artifact")
+            fields = ("slot_id", "next_slot_id") if single_head else ("slot_id",)
+            for field in fields:
                 values = self.buffer.metadata.get(field)
                 if values is None or values.shape != (len(buffer),) or values.dtype.kind not in "US":
                     raise ValueError(f"TMS fitting requires string replay metadata {field}")
             tms_schedule.proposals(self.buffer.metadata["slot_id"], self.buffer.arrays["observation"][:, 27])
-            nonterminal = ~self.buffer.arrays["terminal"]
-            tms_schedule.proposals(self.buffer.metadata["next_slot_id"][nonterminal], self.buffer.arrays["next_observation"][nonterminal, 27])
+            if single_head:
+                nonterminal = ~self.buffer.arrays["terminal"]
+                tms_schedule.proposals(self.buffer.metadata["next_slot_id"][nonterminal], self.buffer.arrays["next_observation"][nonterminal, 27])
         self.code_sha256 = {
             name: sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
             for name in ("controller.py", "replay.py", "trainer.py", "tms.py")
@@ -216,6 +219,28 @@ class Trainer:
             target[nonterminal] += (bundle["gamma"] * value).to(target.dtype)
         return target
 
+    def _actor_tms_loss(self, bundle: dict, batch: dict, action: dict) -> torch.Tensor:
+        """F.5's intended actor control, implemented for new reference runs.
+
+        Reuse H's one joint actor draw. Only the critic input for each head's
+        improvement changes; shared trunk, joint successor target and each
+        entropy term remain. Fixed TMS actions have no gradient. This defines
+        the new implementation, not a recovered historical execution contract.
+        """
+        budgets, counts = self.tms_schedule.proposals(
+            batch["slot_id"], batch["observation"][:, 27].detach().cpu().numpy())
+        fixed_budgets = filter_budgets(
+            torch.as_tensor(budgets, dtype=torch.float64, device=self.device), batch["remaining_budget"])
+        fixed_counts = F.one_hot(torch.as_tensor(counts, dtype=torch.long, device=self.device) - 1, 20).float()
+        budget_input = self._critic_input(batch["observation"], action["executed_budgets"], fixed_counts)
+        count_input = self._critic_input(batch["observation"], fixed_budgets, action["count_one_hot"])
+        budget_value = torch.minimum(bundle["critic1"](budget_input), bundle["critic2"](budget_input))
+        count_value = torch.minimum(bundle["critic1"](count_input), bundle["critic2"](count_input))
+        losses = -budget_value.detach() * action["continuous_score_log_prob"] - count_value
+        losses = losses + 0.2 * action["continuous_log_prob"]
+        losses = losses + 0.2 * (action["probs"] * action["log_probs"]).sum(dim=-1)
+        return losses.mean()
+
     def _update_component(self, name: str, batch: dict) -> dict:
         bundle = self.bundles[name]
         update_index = self.component_updates[name]
@@ -234,18 +259,21 @@ class Trainer:
             parameter.requires_grad_(False)
         try:
             action = self._action(bundle, batch["observation"], batch["remaining_budget"], update_index=update_index, slot_ids=batch.get("slot_id"))
-            critic_input = self._critic_input(batch["observation"], action["executed_budgets"], action["count_one_hot"])
-            value = torch.minimum(bundle["critic1"](critic_input), bundle["critic2"](critic_input))
-            # Budget/filter/Q paths are detached. Continuous control uses the
-            # score-function Q gradient, and its entropy uses the rsample path.
-            # The direct -Q term supplies only the categorical ST gradient.
-            losses = -value
-            if "continuous_score_log_prob" in action:
-                losses = losses - value.detach() * action["continuous_score_log_prob"]
-                losses = losses + 0.2 * action["continuous_log_prob"]
-            if "probs" in action:
-                losses = losses + 0.2 * (action["probs"] * action["log_probs"]).sum(dim=-1)
-            actor_loss = losses.mean()
+            if self.method == "H-ActorTMS":
+                actor_loss = self._actor_tms_loss(bundle, batch, action)
+            else:
+                critic_input = self._critic_input(batch["observation"], action["executed_budgets"], action["count_one_hot"])
+                value = torch.minimum(bundle["critic1"](critic_input), bundle["critic2"](critic_input))
+                # Budget/filter/Q paths are detached. Continuous control uses the
+                # score-function Q gradient, and its entropy uses the rsample path.
+                # The direct -Q term supplies only the categorical ST gradient.
+                losses = -value
+                if "continuous_score_log_prob" in action:
+                    losses = losses - value.detach() * action["continuous_score_log_prob"]
+                    losses = losses + 0.2 * action["continuous_log_prob"]
+                if "probs" in action:
+                    losses = losses + 0.2 * (action["probs"] * action["log_probs"]).sum(dim=-1)
+                actor_loss = losses.mean()
             if not torch.isfinite(actor_loss):
                 raise FloatingPointError("Nonfinite actor loss; critic step completed but actor step aborted")
             bundle["actor_optimizer"].zero_grad(set_to_none=True)

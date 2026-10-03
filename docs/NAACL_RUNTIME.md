@@ -37,6 +37,9 @@ model; do not silently substitute a different tokenizer.
 
 ## 2. Fit visual projection and task adapter
 
+The [training-input commands](training-inputs.md) build both formats below from
+explicit fit-train manifests, with native targets and tokenizer bindings.
+
 Stage 1 input is a non-pickle NPZ with these numeric arrays:
 
 | Key | Shape | Meaning |
@@ -44,9 +47,9 @@ Stage 1 input is a non-pickle NPZ with these numeric arrays:
 | `features` | `[N,25,256]` | Trusted training features, clipped by the fitter |
 | `native_target_tokens` | `[N,25,H]` | Frozen native vision targets in the corresponding regional order |
 
-`H=3584` for the intended 7B executor. Targets must already have been extracted
-and aligned to the 25 regions. The command does not infer a mapping from native
-vision tokens or extract those targets automatically.
+`H=3584` for the intended 7B executor. Use `prepare-alignment` to extract and
+validate the declared 25 native targets, or supply already extracted arrays.
+`fit-projection` consumes that fixed input without inferring another mapping.
 
 ```bash
 bbs fit-projection --records data/alignment.npz --output runs/alignment --device cuda

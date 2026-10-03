@@ -88,7 +88,7 @@ def _record(row, *, task, role, source_dir, output_dir, schemas):
     paths = [field for field in ("image_path", "features_path") if field in value]
     if len(paths) > 1 or (eligible and len(paths) != 1):
         raise ValueError("Eligible records require exactly one image_path or features_path")
-    for field in paths:
+    for field in paths + (["native_target_tokens_path"] if "native_target_tokens_path" in value else []):
         if not isinstance(value[field], str) or not value[field].strip():
             raise ValueError(f"{field} must be a nonempty local file path")
         path = (source_dir / value[field]).resolve()

@@ -25,6 +25,12 @@ def test_training_cli_rejects_abbreviated_binding_overrides(monkeypatch, capsys,
 
 
 @pytest.mark.parametrize('handler,argv,abbreviation', [
+    ('download_dataset_command', ['download-dataset','--dataset','gui360','--revision','a'*40,'--output','o','--include','test/*'], '--out'),
+    ('extract_images_command', ['extract-images','--archive','a.zip','--output','o'], '--out'),
+    ('convert_screenspot_command', ['convert-screenspot','--annotations','a.json','--images','i','--output','o'], '--out'),
+    ('convert_gui360_command', ['convert-gui360','--root','r','--task','G','--role','test','--output','o'], '--out'),
+    ('prepare_alignment_command', ['prepare-alignment','--manifest','m','--output','o'], '--out'),
+    ('prepare_supervised_command', ['prepare-supervised','--manifest','m','--task','G','--tokenizer','t','--output','o'], '--out'),
     ('prepare_dataset_command', ['prepare-dataset','--records','r','--splits','s','--task','G','--output','o'], '--out'),
     ('summarize_run_command', ['summarize-run','--run-directory','r','--output','o'], '--out'),
     ('smoke', ['smoke','--output','o'], '--out'),

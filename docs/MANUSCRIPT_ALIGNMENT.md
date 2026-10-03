@@ -9,6 +9,9 @@ This update aligns the runtime with the current author-specified JDC manuscript 
 | Critic→actor→Polyak; CB no successor; immutable replay | trainer.py / replay.py |
 | Development-mean TMS with selected H and population bindings | tms.py / cli.py |
 | Every-10k development selection; selected versus resumable last state | selection.py |
+| H-ActorTMS actor-only TMS control with paired rerun protocol | trainer.py / protocol.py |
+| Official snapshot download and raw dataset adapters | dataset_sources.py |
+| Native visual targets and teacher-forcing input preparation | training_data.py |
 | Grounding and Action released-input paths | executor.py / runtime.py / evaluation.py |
 | Frozen Train-only retrieval with public exclusion views | retrieval.py |
 | Explicit Action schema/alias/types and official scorer boundary | action_evaluation.py / scoring.py |

@@ -101,7 +101,7 @@ families: exactly 10 entries
     executor_flags: explicit CLI flag/value bindings described below
     executor_artifacts: CLI flag -> {absolute path, sha256}
     methods: same trainable-method population in every family/task
-      method: H, CB, Disclosure-only, Count-only, Independent, Independent-1M
+      method: H, H-ActorTMS, CB, Disclosure-only, Count-only, Independent, Independent-1M
       seed: explicit controller seed
       fit_output: absolute new output directory
       fit_argv: complete string array for the train command
@@ -152,7 +152,8 @@ absent from the registry is rejected.
 Plan these dependencies in two stages: first fit/select H (optionally together
 with CB), then construct schedules from that selected H's actual development
 traces, then prepare the TMS-dependent baseline plan. A plan that both refits H
-and consumes pre-existing TMS schedules is rejected: those means could belong to
+and consumes pre-existing TMS schedules is rejected outside the explicit
+actor-control matched-rerun mode below: those means could belong to
 another H checkpoint. Baseline tasks explicitly supply `paired_h_checkpoint`;
 every schedule's task, family, selected-H hash and development-manifest hash must
 match it. This staging preserves the pairing without pretending that preparation
@@ -169,7 +170,8 @@ cannot substitute for it. The execution journal pins the selected file hash
 across those replicates. Commands run without a shell, and a failed or partial
 execution is never silently retried.
 
-Controller seeds must be distinct across family/task/method runs. Replicate IDs
+Controller seeds must be distinct across family/task/method runs, except the
+explicit H/H-ActorTMS pair below. Replicate IDs
 and public decoder seeds are paired across methods within a family/task, with
 three distinct decoder seeds. These are newly supplied explicit bindings; the
 planner does not pretend to recover or automatically implement the historical
@@ -179,3 +181,29 @@ refinement innovations. Runtime must generate independent secret streams.
 Synthetic tests exercise arithmetic, tie-breaking, state resume, plan validation
 and command ordering through fake callbacks only. Their success is software
 verification, not a benchmark measurement or evidence of ten executed refits.
+
+## H / H-ActorTMS matched reruns
+
+H-ActorTMS implements the intended additional actor-update control for new runs.
+It uses H's 256-wide architecture and parameter counts, joint critic and
+successor target. Budget-head improvement evaluates the sampled budget against
+the fixed TMS count; count-head improvement evaluates the sampled count against
+fixed TMS budgets. Both budgets pass the same remaining-budget filter. There is
+one combined actor update with each entropy term included once. Evaluation uses
+both learned heads together and the policy's own feedback and ledger.
+
+Pass `--method H-ActorTMS --tms-schedule supplied/train-tms.json` to `bbs train`,
+keeping H's other fitting bindings and 1M updates. Checkpoint loading also needs
+that training schedule; development/evaluation schedules are not used. H and
+H-ActorTMS consume the same number of actor draws, so identical initialization
+and replay seeds preserve paired sampling.
+
+For the ten-family planner, set `actor_tms_matched_pair: true` on each task,
+list exactly H and H-ActorTMS with the same controller seed, and bind one frozen
+`paired_h_checkpoint` that predates both reruns. H-ActorTMS gets only
+`schedule_artifacts["--tms-schedule"]`; H gets none. The schedule's task, family,
+source H checkpoint and development manifest must match their declared bindings.
+The new H rerun does not replace this pre-existing TMS schedule. Seeds remain
+distinct across tasks/families; evaluation IDs and public decoder seeds stay
+paired. This is an executable reference design, not evidence that the reported
+F.6 runs used every newly recorded implementation detail.

@@ -12,7 +12,7 @@ import re
 
 
 RUN_KINDS = {"new_recorded_controller_evaluation", "new_behavior_collection"}
-METHODS = {"H", "CB", "Independent", "Independent-1M", "Disclosure-only",
+METHODS = {"H", "H-ActorTMS", "CB", "Independent", "Independent-1M", "Disclosure-only",
            "Count-only", "TMS", "behavior"}
 STATUSES = {"EXEC_PROP", "EXEC_FALLBACK", "FILTER_EXHAUSTED", "TASK_PAD", "STRUCTURAL_PAD"}
 BINDINGS = ("manifest_sha256", "controller_checkpoint_sha256", "controller_config_sha256",

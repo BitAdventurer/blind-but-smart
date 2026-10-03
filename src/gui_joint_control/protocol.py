@@ -32,7 +32,7 @@ from typing import Callable, Mapping
 from .selection import _atomic_json, _canonical, file_sha256
 
 
-UPDATES = {"H": 1_000_000, "CB": 1_000_000, "Disclosure-only": 1_000_000,
+UPDATES = {"H": 1_000_000, "H-ActorTMS": 1_000_000, "CB": 1_000_000, "Disclosure-only": 1_000_000,
            "Count-only": 1_000_000, "Independent": 500_000, "Independent-1M": 1_000_000}
 EXECUTOR_FLAGS = {"--dtype", "--device", "--tokenizer", "--tokenizer-revision", "--dino-model", "--dino-revision",
                   "--retrieval-threshold", "--retrieval-view", "--action-evaluator", "--disable-retrieval"}
@@ -255,13 +255,29 @@ are deliberately absent: runtime supplies fresh independent secret streams.
                 raise ValueError("Each task needs an explicit nonempty controller method list")
             role_methods = {"Disclosure-only", "Count-only", "Independent", "Independent-1M"}
             requested = {method.get("method") for method in methods}
+            matched_actor_pair = task.get("actor_tms_matched_pair", False)
+            if type(matched_actor_pair) is not bool:
+                raise ValueError("actor_tms_matched_pair must be an explicit boolean")
+            if matched_actor_pair and (requested != {"H", "H-ActorTMS"} or len(methods) != 2):
+                raise ValueError("actor_tms_matched_pair requires exactly H and H-ActorTMS")
+            if {"H", "H-ActorTMS"}.issubset(requested) and not matched_actor_pair:
+                raise ValueError("A paired H rerun requires actor_tms_matched_pair=true")
             if "H" in requested and requested & role_methods:
                 raise ValueError("Fit H first, then construct its TMS artifacts and a separate baseline plan; pre-existing schedules cannot bind a newly fitted H")
             paired_h = None
-            if requested & role_methods:
+            if requested & (role_methods | {"H-ActorTMS"}):
                 paired_h = _artifact(task.get("paired_h_checkpoint"), verify_artifacts)
                 register_artifact(paired_h)
                 bound["paired_h_checkpoint"] = paired_h
+            if matched_actor_pair:
+                # This checkpoint supplies a schedule frozen before BOTH reruns.
+                # The new H result must never be used to change that schedule.
+                pair_seeds = {_seed(method.get("seed")) for method in methods}
+                if len(pair_seeds) != 1:
+                    raise ValueError("The matched actor pair must share one initialization/replay seed")
+                if pair_seeds & controller_seeds:
+                    raise ValueError("Controller seeds must remain distinct across families and tasks")
+                bound["actor_tms_matched_pair"] = True
             method_ids, evaluation_pairing = set(), None
             for method in methods:
                 method_id = method.get("method")
@@ -269,7 +285,7 @@ are deliberately absent: runtime supplies fresh independent secret streams.
                     raise ValueError("Unknown or duplicate trainable controller method")
                 method_ids.add(method_id)
                 seed = _seed(method.get("seed"))
-                if seed in controller_seeds:
+                if seed in controller_seeds and not matched_actor_pair:
                     raise ValueError("Controller seeds must be distinct across family/task/method streams")
                 controller_seeds.add(seed)
                 schedules = method.get("schedule_artifacts", {})
@@ -280,6 +296,10 @@ are deliberately absent: runtime supplies fresh independent secret streams.
                     raise ValueError("Standalone single-head methods require train, development and evaluation TMS schedule bindings")
                 if method_id in ("Independent", "Independent-1M") and "--tms-schedule" not in schedules:
                     raise ValueError("Independent fitting requires its training TMS schedule binding")
+                if method_id == "H-ActorTMS" and set(schedules) != {"--tms-schedule"}:
+                    raise ValueError("H-ActorTMS requires only its fixed training TMS schedule; evaluation uses both learned heads")
+                if matched_actor_pair and method_id == "H" and schedules:
+                    raise ValueError("The matched H rerun must retain its original joint actor update without a TMS schedule")
                 for artifact in schedules.values():
                     register_artifact(artifact)
                     if paired_h is not None:

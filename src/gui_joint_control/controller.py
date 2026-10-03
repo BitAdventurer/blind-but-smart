@@ -139,6 +139,7 @@ def _widths(settings: dict[str, Any], method: str) -> tuple[int, int]:
 def _roles(method: str) -> dict[str, str]:
     methods = {
         "H": {"joint": "joint"}, "CB": {"joint": "joint"},
+        "H-ActorTMS": {"joint": "joint"},
         "Disclosure-only": {"disclosure": "disclosure"},
         "Count-only": {"count": "count"},
         "Independent": {"disclosure": "disclosure", "count": "count"},
