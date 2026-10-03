@@ -3,9 +3,9 @@ requires = ["setuptools>=78"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "blind-but-smart"
+name = "jdc-gui"
 version = "0.4.0"
-description = "Explicit reference runtime for joint GUI disclosure and candidate-count control"
+description = "JDC: Learning Joint Disclosure and Decoding Control for Vision-Language GUI Grounding"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

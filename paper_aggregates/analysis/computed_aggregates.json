@@ -1,18 +1,20 @@
 {
   "status": "pass",
-  "rounded_numeric_checks_passed": 54,
+  "rounded_numeric_checks_passed": 56,
   "input_sha256": {
     "C_6.tex": "77d1d129bf0c17f4f73b1d53a210ed0f82fb753098ca9b81a9b6da01329d82cd",
     "C_7.tex": "6f75e4b7276c49b99fced6f3241002834e71b4097c70a5f737615515abdaccc0",
     "D_6.tex": "428b27dc1376de9a7a923c53103463682001635e91689a9c26e3c4dd2f367183",
-    "F_5.tex": "75dedfb9c29999bc8e3ee571eecdd5eca8f99dc931a6fd3d5f77f1eafa3f6e8d"
+    "F_5.tex": "75dedfb9c29999bc8e3ee571eecdd5eca8f99dc931a6fd3d5f77f1eafa3f6e8d",
+    "F_6.tex": "ab3417941bf71baf86034a349dec20d37fc962e7c1e12a4745f126216de73c54"
   },
   "scope": "Arithmetic from published aggregates only; not an experimental rerun or raw-record verification.",
   "exclusions": [
     "Raw predictions and fitting/evaluation execution",
     "G attack intervals",
     "Retention reconstruction",
-    "F.5 intervals: Independent-1M family-level inputs are absent"
+    "F.5 intervals: Independent-1M family-level inputs are absent",
+    "F.6 approximate intervals: paired family inputs and repeat counts are not supplied"
   ],
   "C6_means_pct": {
     "G_H": 76.6,
@@ -371,6 +373,25 @@
     ],
     "intervals_recomputed": false
   },
+  "F6": {
+    "status": "author_confirmed_experimental_summary",
+    "mean_accuracy_pct": {
+      "H (matched rerun)": [
+        76.5,
+        46.7
+      ],
+      "H-ActorTMS": [
+        75.6,
+        45.8
+      ]
+    },
+    "H_minus_ActorTMS_pp": [
+      0.9,
+      0.9
+    ],
+    "intervals_recomputed": false,
+    "experimental_status_confirmed": true
+  },
   "checks": [
     "C.6 mean G_H",
     "C.6 mean G_TMS",
@@ -425,6 +446,8 @@
     "D.6 H mean",
     "D.6 H SD",
     "F.5 H-Independent-1M Grounding",
-    "F.5 H-Independent-1M Action"
+    "F.5 H-Independent-1M Action",
+    "F.6 H-ActorTMS Grounding",
+    "F.6 H-ActorTMS Action"
   ]
 }

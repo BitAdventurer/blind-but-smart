@@ -1,8 +1,8 @@
-# 🖥️ Blind but Smart
+# JDC: Learning Joint Disclosure and Decoding Control for Vision-Language GUI Grounding
 
 **Joint disclosure-budget and candidate-count control for GUI instruction grounding and action prediction.**
 
-[![Runtime tests](https://github.com/BitAdventurer/blind-but-smart/actions/workflows/runtime-tests.yml/badge.svg?branch=main)](https://github.com/BitAdventurer/blind-but-smart/actions/workflows/runtime-tests.yml)
+[![Runtime tests](https://github.com/BitAdventurer/jdc-gui/actions/workflows/runtime-tests.yml/badge.svg?branch=main)](https://github.com/BitAdventurer/jdc-gui/actions/workflows/runtime-tests.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-2B7A78.svg)](LICENSE)
 
 This runtime implements the current author-specified JDC controller and recorded-screen execution contracts. A controller chooses regional disclosure budgets and candidate count; a frozen Qwen2.5-VL executor uses one shared refinement release. The implementation supports new experiments. It does not recover historical weights or establish reproduction of reported measurements.
@@ -15,7 +15,7 @@ Admission precedes private screen access. The probe guides allocation, fresh Gau
 
 The [recorded metadata evaluator](experiments/README.md) provides Appendix G's pair/record bootstrap, explicit analyzed sample counts, and machine-readable calculation provenance.
 The [published-aggregate companion](paper_aggregates/analysis/README.md) checks
-the supplied C.6, C.7, D.6 and F.5 table arithmetic with Python's standard library.
+the supplied C.6, C.7, D.6, F.5 and F.6 table arithmetic in 56 checks with Python's standard library.
 
 - Projection alignment and task-specific language q/v LoRA fitting.
 - H, H-ActorTMS, CB, Disclosure-only, Count-only, Independent and Independent-1M controllers.

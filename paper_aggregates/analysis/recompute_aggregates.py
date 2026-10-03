@@ -165,14 +165,28 @@ def compute():
     for method, columns in (("H (joint)", ("G_H", "A_H")), ("Independent-500k", ("G_Independent", "A_Independent"))):
         require(allocations[method] == [means[key] for key in columns], "F.5/C.6 inconsistent baseline " + method)
     extra_training = [a - b for a, b in zip(allocations["Independent-1M"], allocations["Independent-500k"])]
+
+    f6 = read_rows("F_6.tex", hashes)
+    actor_updates = {row[0]: list(map(F, row[1:])) for row in f6
+                     if row[0] in {"H (matched rerun)", "H-ActorTMS"}}
+    require(len(actor_updates) == 2, "F.6: expected two methods")
+    actor_difference = [a - b for a, b in zip(actor_updates["H (matched rerun)"], actor_updates["H-ActorTMS"])]
+    # Appendix F.5 reports a 0.9 pp difference for both tasks in Table F.6.
+    # Keep this companion independent of the manuscript's section files.
+    for task, value in zip(("Grounding", "Action"), actor_difference):
+        check_round("F.6 H-ActorTMS " + task, value, "0.9", checks)
     return {"status": "pass", "rounded_numeric_checks_passed": len(checks), "input_sha256": hashes,
             "scope": "Arithmetic from published aggregates only; not an experimental rerun or raw-record verification.",
             "exclusions": ["Raw predictions and fitting/evaluation execution", "G attack intervals", "Retention reconstruction",
-                           "F.5 intervals: Independent-1M family-level inputs are absent"],
+                           "F.5 intervals: Independent-1M family-level inputs are absent",
+                           "F.6 approximate intervals: paired family inputs and repeat counts are not supplied"],
             "C6_means_pct": {name: float(value) for name, value in means.items()}, "C7_contrasts": contrasts,
             "D6_methods": screenspot, "D6_H_minus_TMS": seed_summary,
             "F5": {"H_minus_Independent1M_pp": list(map(float, difference)),
                    "Independent1M_minus_500k_pp": list(map(float, extra_training)), "intervals_recomputed": False},
+            "F6": {"status": "author_confirmed_experimental_summary", "mean_accuracy_pct": {name: list(map(float, values)) for name, values in actor_updates.items()},
+                   "H_minus_ActorTMS_pp": list(map(float, actor_difference)), "intervals_recomputed": False,
+                   "experimental_status_confirmed": True},
             "checks": checks}
 
 
